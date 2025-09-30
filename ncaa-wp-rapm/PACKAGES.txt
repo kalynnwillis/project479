@@ -1,0 +1,65 @@
+# Required R Packages for NCAA RAPM Analysis
+# Install using: install.packages(c("package1", "package2", ...))
+
+# Core packages
+tidyverse       # Data manipulation and visualization suite
+dplyr           # Data manipulation (part of tidyverse)
+readr           # Reading CSV files (part of tidyverse)
+purrr           # Functional programming (part of tidyverse)
+
+# Data acquisition
+ncaahoopR       # NCAA basketball play-by-play data
+                # Install via: devtools::install_github("lbenz730/ncaahoopR")
+
+# Machine learning
+glmnet          # Regularized regression (Ridge, Lasso, Elastic Net)
+caret           # Machine learning framework
+gbm             # Gradient boosting machines
+xgboost         # Extreme gradient boosting
+randomForest    # Random forest models
+
+# Matrix operations
+Matrix          # Sparse matrix support for efficiency
+
+# Model evaluation
+pROC            # ROC curves and AUC calculation
+
+# Visualization
+ggplot2         # Grammar of graphics plotting (part of tidyverse)
+viridis         # Color scales
+cowplot         # Plot arrangements and themes
+scales          # Scale functions for ggplot2
+
+# Tables and reporting
+knitr           # Dynamic report generation
+kableExtra      # Enhanced table formatting
+
+# Optional for Quarto reports
+quarto          # Quarto document system
+rmarkdown       # R Markdown documents
+
+# Installation script:
+# Run the following in R:
+
+required_packages <- c(
+  "tidyverse",
+  "glmnet",
+  "caret", 
+  "Matrix",
+  "gbm",
+  "xgboost",
+  "randomForest",
+  "pROC",
+  "viridis",
+  "cowplot",
+  "knitr",
+  "kableExtra"
+)
+
+install.packages(required_packages)
+
+# Install ncaahoopR from GitHub
+if (!requireNamespace("devtools", quietly = TRUE)) {
+  install.packages("devtools")
+}
+devtools::install_github("lbenz730/ncaahoopR")

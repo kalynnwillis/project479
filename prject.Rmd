@@ -1,5 +1,0 @@
----
-title: "prject"
-output: html_document
----
-
