@@ -1,0 +1,21 @@
+---
+title: "NCAA WP RAPM"
+author: ""
+format: revealjs
+---
+
+## Motivation
+
+- Win probability modeling
+- RAPM for player impact
+
+## Results
+
+```{r}
+if (file.exists("data/figs/example.png")) {
+  knitr::include_graphics("data/figs/example.png")
+} else {
+  cat("Add figures in `figs/` and re-render.")
+}
+```
+

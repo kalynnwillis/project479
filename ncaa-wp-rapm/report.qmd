@@ -1,0 +1,53 @@
+---
+title: "Player Impact on Win Probability in NCAA Basketball (WP–RAPM)"
+author: "Team TODO"
+date: today
+format: html
+---
+Goal. We estimate how much individual contributions on the court affect a college basketball team’s chance of winning while the game is being played.
+
+Approach. We first train a model that maps game state (score margin, time remaining, and whether the team is at home) to the chance of winning. Next, we slice each game into short “stints” (continuous segments with the same two lineups; here we start with team-level segments as a reliable baseline). For each stint, we calculate how much the team’s chance of winning rose or fell. We then attribute those changes to the teams (and in future work, the players) on the floor using a regularized regression that properly shares credit across teammates and opponents.
+
+Findings. Our win-probability model is accurate and well-calibrated on held-out games. Using this model, we compute a ridge-adjusted plus-minus on the win-probability scale (WP–RAPM). The ranking highlights teams that consistently tilt games in their favor during their minutes on court. The method handles small samples by shrinking extreme estimates toward zero.
+
+Limitations. Play-by-play data quality varies across schools, and detailed substitution logs are not always consistent. For Project 1, we validate the full pipeline with team-level segments. Player-level lineups will be introduced next, focusing on conferences with high-quality logs.
+
+Takeaways. Measuring impact directly in terms of winning (rather than points per possession) surfaces who moves the needle when it matters. Coaches and analysts can use WP–RAPM to evaluate rotations, late-game units, and under-the-radar contributors.
+
+1. Background & Motivation
+
+Adjusted Plus–Minus (APM) and its ridge variant (RAPM) estimate on-court impact after controlling for teammate/opponent quality. Doing this on the win-probability scale ties impact directly to winning and gives more weight to high-leverage moments. Our objective is to implement a practical, reproducible WP–RAPM for NCAA games using public play-by-play.
+
+2. Data
+
+Source: ncaahoopR for schedules and play-by-play.
+
+Scope: Prototype on 2023–2024 D1 games for a set of programs with reliable logs (configurable).
+
+Key fields: game id, time/half, scores, home/away, substitutions (if available), team names.
+
+Processing: Save raw pbp to data/raw/, intermediate stints to data/interim/, and model outputs to data/processed/.
+
+library(tidyverse)
+library(readr)
+metrics <- readr::read_csv("tables/wp_model_metrics.csv", show_col_types = FALSE)
+metrics
+
+3. Methods
+
+3.1 Win Probability (WP) Models
+
+We model P(home wins | time remaining, score margin, home) using logistic regression with natural splines for time and score. We evaluate with Brier score and log loss on held-out games and check calibration.
+
+knitr::include_graphics("figs/wp_calibration.png")
+3.2 Stint Construction
+
+We define change-points whenever the score or lineup state changes; for Project 1 we operate at team level to ensure robustness across data sources. For each stint, we record the start/end win probability and compute ΔWP.
+
+3.3 Ridge APM on ΔWP (WP–RAPM)
+
+Let y be ΔWP for each stint and X encodes on-floor entities: +1 for the home team (or players), −1 for the away team (or players). We fit ridge regression (glmnet, α=0) with cross-validation, weighting by stint duration to reduce noise.
+
+3.4 Validation
+
+We report WP-model metrics, and for RAPM we examine rank stability under split-halves and penalty variation, and apply minimum exposure filters.
