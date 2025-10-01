@@ -1,9 +1,6 @@
 # Get NCAA data using hoopR package (alternative to ncaahoopR)
 # hoopR uses ESPN's API directly and may have better data availability
 
-# Set CRAN mirror
-options(repos = c(CRAN = "https://cloud.r-project.org/"))
-
 library(tidyverse)
 
 # Install hoopR if needed
@@ -14,13 +11,10 @@ if (!requireNamespace("hoopR", quietly = TRUE)) {
 
 library(hoopR)
 
-message("===================================")
-message("NCAA Data via hoopR Package")
-message("===================================\n")
-
 # Configuration
 # hoopR uses numeric year (e.g., 2022 for 2021-22 season)
-SEASON <- c(2023, 2024)  # 2 most recent seasons (prevents memory issues)
+# Expanding to 7 seasons for more robust ML models
+SEASON <- c(2018, 2019, 2020, 2021, 2022, 2023, 2024)
 message(paste("Seasons:", paste(SEASON, collapse=", ")))
 
 # Load play-by-play
@@ -77,10 +71,7 @@ box_scores <- player_box %>%
   filter(!is.na(min), min > 0) %>%
   select(game_id, player, team, min, pts, reb, ast)
 
-# Save
-dir.create("data/raw", recursive = TRUE, showWarnings = FALSE)
-dir.create("data/interim", recursive = TRUE, showWarnings = FALSE)
-
+# Save (directories created by 00_setup.R)
 saveRDS(pbp_clean, "data/raw/pbp_clean.rds")
 saveRDS(box_scores, "data/interim/box_scores.rds")
 

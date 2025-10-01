@@ -1,15 +1,18 @@
 project:
-title: "WP-RAPM for NCAA Basketball"
-output-dir: _site
+  title: "WP-RAPM for NCAA Basketball"
+  output-dir: _site
+
 format:
-html:
-toc: true
-number-sections: true
-code-fold: true
-df-print: paged
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+    df-print: paged
+
 execute:
-echo: true
-warning: false
-message: false
-freeze: auto
+  echo: true
+  warning: false
+  message: false
+  freeze: auto
+
 editor: visual

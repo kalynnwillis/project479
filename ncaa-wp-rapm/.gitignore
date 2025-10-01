@@ -52,3 +52,6 @@ __pycache__/
 # Keep README and documentation
 !README.md
 !*.qmd
+
+/.quarto/
+**/*.quarto_ipynb

@@ -254,8 +254,7 @@ message(paste("\nRidge MSE:", round(min(cv_ridge$cvm), 6)))
 message(paste("Lasso MSE:", round(min(cv_lasso$cvm), 6)))
 message(paste("Elastic MSE:", round(min(cv_elastic$cvm), 6)))
 
-# Save results
-dir.create("data/processed", showWarnings = FALSE, recursive = TRUE)
+# Save results (directories created by 00_setup.R)
 rapm_output <- list(
   rapm_table = rapm_results,
   ridge_model = ridge_model,

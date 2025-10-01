@@ -67,14 +67,6 @@ predictors <- c("score_diff", "time_remaining_min", "time_elapsed_min",
                 "score_diff_x_time", "score_diff_sq", "has_ball", 
                 "is_first_half", "is_second_half", "is_clutch")
 
-# STRATEGY 2: Increase R memory limit (if on Windows/macOS with limits)
-if (.Platform$OS.type == "windows") {
-  memory.limit(size = 32000)  # 32GB
-}
-
-# Try to increase vector memory limit
-options(expressions = 500000)
-
 # Model 1: Logistic Regression (baseline)
 message("Training Model 1: Logistic Regression...")
 model_logit <- glm(
@@ -136,49 +128,6 @@ pred_rf_test <- predict(model_rf, test_rf)$predictions[, 2]
 
 message("✓ Random Forest complete!")
 
-# STRATEGY 3B: Batch Random Forest (if ranger still fails)
-# This approach trains multiple smaller forests and averages predictions
-batch_random_forest <- function(train_data, test_data, n_batches = 5, trees_per_batch = 100) {
-  message(paste("Training", n_batches, "Random Forest batches with", trees_per_batch, "trees each..."))
-  
-  all_train_preds <- matrix(0, nrow = nrow(train_data), ncol = n_batches)
-  all_test_preds <- matrix(0, nrow = nrow(test_data), ncol = n_batches)
-  
-  for (i in 1:n_batches) {
-    message(paste("  Batch", i, "of", n_batches))
-    
-    # Sample subset for this batch
-    batch_idx <- sample(1:nrow(train_data), size = floor(nrow(train_data) * 0.6))
-    batch_data <- train_data[batch_idx, ]
-    
-    # Train small forest
-    rf_batch <- ranger(
-      home_win ~ .,
-      data = batch_data %>% select(home_win, all_of(predictors)),
-      num.trees = trees_per_batch,
-      max.depth = 8,
-      min.node.size = 50,
-      probability = TRUE,
-      num.threads = 1,
-      verbose = FALSE
-    )
-    
-    # Predict
-    all_train_preds[, i] <- predict(rf_batch, train_data %>% select(all_of(predictors)))$predictions[, 2]
-    all_test_preds[, i] <- predict(rf_batch, test_data %>% select(all_of(predictors)))$predictions[, 2]
-    
-    # Clean up
-    rm(rf_batch, batch_data)
-    gc()
-  }
-  
-  # Average predictions across batches
-  list(
-    train = rowMeans(all_train_preds),
-    test = rowMeans(all_test_preds)
-  )
-}
-
 # Model 4: XGBoost (memory efficient with sparse matrices)
 message("Training Model 4: XGBoost...")
 
@@ -211,16 +160,15 @@ model_xgb <- xgb.train(
 pred_xgb_train <- predict(model_xgb, train_matrix)
 pred_xgb_test <- predict(model_xgb, test_matrix)
 
-# Evaluation
+# Evaluation (uses utility functions from utils.R)
 evaluate_model <- function(pred_probs, actual, model_name, dataset) {
   actual_numeric <- as.numeric(actual) - 1
   roc_obj <- roc(actual_numeric, pred_probs, quiet = TRUE)
   auc_val <- as.numeric(auc(roc_obj))
-  brier <- mean((pred_probs - actual_numeric)^2)
-  log_loss <- -mean(actual_numeric * log(pred_probs + 1e-15) + 
-                      (1 - actual_numeric) * log(1 - pred_probs + 1e-15))
+  brier <- brier_score(pred_probs, actual_numeric)
+  ll <- log_loss(pred_probs, actual_numeric)
   tibble(Model = model_name, Dataset = dataset, AUC = auc_val, 
-         Brier_Score = brier, Log_Loss = log_loss)
+         Brier_Score = brier, Log_Loss = ll)
 }
 
 results <- bind_rows(
@@ -244,7 +192,7 @@ best_model_name <- results %>%
 
 message(paste("Best model:", best_model_name))
 
-# Save all models
+# Save all models (directories created by 00_setup.R)
 model_list <- list(
   logistic = model_logit,
   gbm = model_gbm,
@@ -256,7 +204,6 @@ model_list <- list(
   sampled_games = unique(wp_features$game_id)
 )
 
-dir.create("data/interim", showWarnings = FALSE, recursive = TRUE)
 saveRDS(model_list, "data/interim/wp_models.rds")
 write_csv(results, "tables/wp_model_evaluation.csv")
 
