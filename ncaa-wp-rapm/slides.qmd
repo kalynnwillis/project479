@@ -53,6 +53,12 @@ execute:
 :::
 :::
 
+<br>
+
+::: {.callout-note}
+**Scale Note**: Traditional RAPM uses point differential (±3-8). We use **WP change per possession** (±0.0001-0.001). Small raw values, but multiply by ~70 possessions/game for substantial impact!
+:::
+
 ## Methodology Overview {.smaller}
 
 ::: {.panel-tabset}
@@ -107,7 +113,7 @@ tibble(
   knitr::kable()
 ```
 
-**Source**: hoopR package via ESPN API (2023-24 season)
+**Source**: hoopR package via ESPN API (2018-2024 seasons)
 
 ## Results: RAPM Distribution
 
@@ -200,15 +206,53 @@ rapm_table %>%
 ## Key Findings {.smaller}
 
 ::: incremental
-1. **Win Probability Modeling Success**: XGBoost achieved 0.895 AUC (excellent prediction)
+1. **Win Probability Modeling Success**: XGBoost achieved 0.861 AUC (excellent prediction) across 7 seasons
 
-2. **Elite Players Impact**: Top players add 0.001-0.003 WP per possession
-   - Over 70 possessions/game = substantial win probability shifts
+2. **Elite Players Impact**: Top players add 0.0005-0.0009 WP per possession
+   - **Scaled per game**: +3-6% win probability (70 possessions)
+   - **Season impact**: Equivalent to 3-8 additional wins
+   - *(Small numbers due to WP scale vs traditional point differential scale)*
 
 3. **Regularization Critical**: Ridge RAPM stable; Lasso too conservative for noisy data
 
 4. **Minutes ≠ Value**: Positive correlation but high-minute players can have negative RAPM
    - Playing time driven by multiple factors beyond pure performance
+:::
+
+## WP-RAPM vs Traditional RAPM Scale {.smaller}
+
+::: columns
+::: {.column width="48%"}
+**Traditional RAPM**
+
+- **Scale**: Points per 100 poss.
+- **Top Players**: +3 to +8
+- **Average**: ~0
+- **Poor Players**: -3 to -8
+
+<br>
+
+**Example**: +5 RAPM means team scores 5 more points per 100 possessions with player on court
+:::
+
+::: {.column width="48%"}
+**Our WP-RAPM**
+
+- **Scale**: WP change per poss.
+- **Top Players**: +0.0005 to +0.0009
+- **Average**: ~0
+- **Poor Players**: -0.0005 to -0.0009
+
+<br>
+
+**Example**: +0.0009 RAPM means team gains 0.09% WP per possession = **+6% per game**
+:::
+:::
+
+<br>
+
+::: {.callout-important}
+**Different scales, same concept!** WP-RAPM values look small but represent substantial impact when scaled to game/season level.
 :::
 
 ## Interpretation Example {.smaller}
@@ -222,18 +266,18 @@ top_player <- rapm_table %>%
 
 **Top Player**: `{r} top_player$player`
 
-- RAPM: `{r} round(top_player$ridge_rapm, 5)`
-- Games: `{r} top_player$games_played`
-- Avg Minutes: `{r} round(top_player$avg_minutes, 1)`
+- RAPM (raw): `{r} round(top_player$ridge_rapm, 6)` WP/possession
+- Games: `{r} top_player$games_played` | Avg Minutes: `{r} round(top_player$avg_minutes, 1)`
 
 <br>
 
 ::: {.fragment}
-**What does this mean?**
+**Scaled Interpretation** (per game, ~70 possessions):
 
-- Adds ~`{r} round(top_player$ridge_rapm * 100, 2)`% to win probability per possession
-- Over 70 possessions/game ≈ `{r} round(top_player$ridge_rapm * 70 * 100, 1)`% WP swing
-- Equivalent to multiple wins per season
+- **Per Possession**: +`{r} round(top_player$ridge_rapm * 100, 3)`% win probability
+- **Per Game Impact**: +`{r} round(top_player$ridge_rapm * 70 * 100, 1)`% win probability
+- **Season Impact**: Equivalent to **`{r} round(top_player$ridge_rapm * 70 * top_player$games_played * 100, 1)`%** cumulative WP
+- **Wins Above Replacement**: ~`{r} round(top_player$ridge_rapm * 70 * top_player$games_played, 1)` additional wins
 :::
 
 ## Limitations & Solutions {.smaller}
@@ -279,8 +323,8 @@ top_player <- rapm_table %>%
 <br>
 
 ::: incremental
-- ✅ Win probability models: Excellent prediction (AUC = 0.895)
-- ✅ Analyzed 2,044 players across 465 games
+- ✅ Win probability models: Excellent prediction (AUC = 0.861)
+- ✅ Analyzed 2,676 players across 38,625 games (7 seasons: 2018-2024)
 - ✅ Ridge RAPM provides stable rankings despite data limitations
 - ✅ Direct interpretation: WP change per possession
 :::

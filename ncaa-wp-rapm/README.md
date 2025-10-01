@@ -129,7 +129,7 @@ Train multiple algorithms to predict home team win probability:
 
 **Features**: Score differential, time remaining, interactions, possession, clutch indicator
 
-**Best Model**: XGBoost (AUC = 0.895)
+**Best Model**: XGBoost (AUC = 0.861) across 7 seasons (2018-2024)
 
 ### 2. Player Shifts
 

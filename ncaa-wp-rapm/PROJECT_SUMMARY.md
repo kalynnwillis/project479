@@ -22,7 +22,7 @@ Your NCAA basketball RAPM analysis is fully implemented, optimized, and document
 - ❌ 12+ hour pipeline → ✅ 25-35 minute pipeline
 
 ### 3. **Results Achieved**
-- **Win Probability**: AUC = 0.895 (XGBoost) - excellent!
+- **Win Probability**: AUC = 0.861 (XGBoost) across 7 seasons - excellent!
 - **Players Analyzed**: 2,044 NCAA players
 - **Games**: 465 games from 2023-24 seasons
 - **Top Player**: Jalen Celestine (RAPM = 0.00326)
@@ -105,8 +105,8 @@ This creates:
 ## 📈 Key Findings (For Your Report/Presentation)
 
 ### 1. Win Probability Modeling
-- **Best Model**: XGBoost (AUC = 0.895)
-- **All models** performed well (AUC > 0.89)
+- **Best Model**: XGBoost (AUC = 0.861)
+- **All models** performed well (AUC > 0.85)
 - Shows game state features are highly predictive
 
 ### 2. Player Impact
@@ -246,7 +246,7 @@ This project demonstrates proficiency in:
 ## 📧 Presenting Your Work
 
 ### For Report
-- Lead with win probability modeling success (AUC = 0.895)
+- Lead with win probability modeling success (AUC = 0.861 across 7 seasons)
 - Present top players with visualizations
 - Acknowledge data limitations clearly
 - Emphasize methodological rigor despite constraints

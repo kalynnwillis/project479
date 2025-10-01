@@ -300,7 +300,7 @@ rapm_table %>%
 knitr::include_graphics("figs/wp_model_performance.png")
 ```
 
-All four models achieved excellent discrimination (AUC > 0.89). XGBoost performed best on the test set (AUC = 0.895), demonstrating the value of ensemble methods for win probability prediction.
+All four models achieved excellent discrimination (AUC > 0.85). XGBoost performed best on the test set (AUC = 0.861), demonstrating the value of ensemble methods for win probability prediction across 7 seasons of diverse data.
 
 ## Summary Statistics
 
@@ -382,8 +382,8 @@ We successfully implemented RAPM on a win probability scale for NCAA basketball,
 
 **Key Findings**:
 
-1. **Win Probability Modeling**: Achieved excellent predictive performance (AUC = 0.895 with XGBoost)
-2. **Player Impact Range**: Top players contribute 0.001-0.003 additional win probability per possession 
+1. **Win Probability Modeling**: Achieved excellent predictive performance (AUC = 0.861 with XGBoost across 7 seasons)
+2. **Player Impact Range**: Top players contribute 0.0005-0.0009 additional win probability per possession (equivalent to +3-6% per game) 
 3. **Regularization Necessity**: Ridge RAPM outperformed Lasso for noisy approximate lineup data
 4. **Playing Time Correlation**: Positive but imperfect relationship between RAPM and minutes played
 
