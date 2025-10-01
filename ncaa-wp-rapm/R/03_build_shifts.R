@@ -5,15 +5,34 @@ source("R/utils.R")
 
 library(tidyverse)
 library(Matrix)
+library(gbm)  # Needed for gbm.perf()
 
 message("Building player shifts...")
 
 # Load data
-pbp_data <- readRDS("data/raw/pbp_clean.rds")
 model_list <- readRDS("data/interim/wp_models.rds")
 
-# Get the best model
+# Load model-specific libraries based on best model
 best_model_name <- model_list$best_model_name
+if (best_model_name == "XGBoost") {
+  library(xgboost)
+} else if (best_model_name == "Random Forest") {
+  library(ranger)
+}
+
+# Use only the games that were in the WP model (if sampled)
+pbp_data_full <- readRDS("data/raw/pbp_clean.rds")
+
+if (!is.null(model_list$sampled_games)) {
+  message(paste("Using sampled games from WP model:", length(model_list$sampled_games), "games"))
+  pbp_data <- pbp_data_full %>% filter(game_id %in% model_list$sampled_games)
+} else {
+  pbp_data <- pbp_data_full
+}
+
+message(paste("Play-by-play data:", nrow(pbp_data), "plays from", n_distinct(pbp_data$game_id), "games"))
+
+# Get the best model
 best_model <- switch(
   best_model_name,
   "Logistic" = model_list$logistic,
@@ -57,7 +76,8 @@ if (best_model_name == "Logistic") {
   best_iter <- gbm.perf(best_model, method = "cv", plot.it = FALSE)
   wp <- predict(best_model, pred_data, n.trees = best_iter, type = "response")
 } else if (best_model_name == "Random Forest") {
-  wp <- predict(best_model, pred_data, type = "prob")[, 2]
+  # ranger returns predictions in $predictions, column 2 is probability of win
+  wp <- predict(best_model, pred_data)$predictions[, 2]
 } else if (best_model_name == "XGBoost") {
   pred_matrix <- xgb.DMatrix(data = as.matrix(pred_data))
   wp <- predict(best_model, pred_matrix)

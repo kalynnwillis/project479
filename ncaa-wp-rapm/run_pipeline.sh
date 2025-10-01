@@ -9,7 +9,7 @@ echo "================================="
 echo ""
 
 echo "Step 2: Building Win Probability Models..."
-Rscript R/02_build_wp_model.R 2>&1 | tail -15
+Rscript R/02_build_wp_model_RF.R 2>&1 | tail -15
 echo ""
 
 echo "Step 3: Building Player Shifts..."
