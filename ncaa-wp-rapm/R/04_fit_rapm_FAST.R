@@ -1,4 +1,4 @@
-# Fit RAPM using regularized regression (Ridge/Lasso)
+# Fit RAPM using regularized regression - FAST OPTIMIZED VERSION
 # Regularized Adjusted Plus-Minus on Win Probability scale
 
 source("R/utils.R")
@@ -7,13 +7,22 @@ library(tidyverse)
 library(glmnet)
 library(Matrix)
 
-message("Fitting RAPM model...")
+message("Fitting RAPM model (FAST VERSION)...")
 
 # Load shifts data
 shifts <- readRDS("data/interim/player_shifts.rds")
 player_games <- readRDS("data/interim/player_games.rds")
 
 message(paste("Loaded", nrow(shifts), "shift observations"))
+
+# OPTIMIZATION 1: Sample shifts if dataset is too large
+MAX_SHIFTS <- 500000  # Limit for speed
+if (nrow(shifts) > MAX_SHIFTS) {
+  message(paste("Sampling", MAX_SHIFTS, "shifts from", nrow(shifts), "for faster computation..."))
+  set.seed(479)
+  shifts <- shifts %>% slice_sample(n = MAX_SHIFTS)
+  message(paste("Using", nrow(shifts), "sampled shifts"))
+}
 
 # Get unique players
 all_players <- unique(c(shifts$home_player, shifts$away_player))
@@ -22,51 +31,52 @@ all_teams <- unique(c(shifts$home_team, shifts$away_team))
 message(paste("Unique players:", length(all_players)))
 message(paste("Unique teams:", length(all_teams)))
 
-# Create design matrix for RAPM
-# Each row is a shift, each column is a player
-# Value is +1 if player is on home team, -1 if on away team, 0 otherwise
-
-# For computational efficiency with large datasets, use sparse matrices
-create_rapm_matrix <- function(shifts_data, players) {
+# OPTIMIZATION 2: Vectorized sparse matrix creation
+create_rapm_matrix_fast <- function(shifts_data, players) {
   n_shifts <- nrow(shifts_data)
   n_players <- length(players)
   
-  message("Creating sparse design matrix...")
+  message("Creating sparse design matrix (vectorized)...")
   message(paste("Dimensions:", n_shifts, "shifts x", n_players, "players"))
   
-  # Initialize sparse matrix
-  X <- Matrix(0, nrow = n_shifts, ncol = n_players, sparse = TRUE)
+  # Create player index lookup for fast matching
+  player_lookup <- setNames(1:n_players, players)
+  
+  # Find indices for home and away players
+  home_indices <- match(shifts_data$home_player, players)
+  away_indices <- match(shifts_data$away_player, players)
+  
+  # Remove NAs
+  valid_home <- !is.na(home_indices)
+  valid_away <- !is.na(away_indices)
+  
+  # Build sparse matrix using triplet format (i, j, x)
+  i_indices <- c(which(valid_home), which(valid_away))
+  j_indices <- c(home_indices[valid_home], away_indices[valid_away])
+  values <- c(rep(1, sum(valid_home)), rep(-1, sum(valid_away)))
+  
+  # Create sparse matrix
+  X <- sparseMatrix(
+    i = i_indices,
+    j = j_indices,
+    x = values,
+    dims = c(n_shifts, n_players)
+  )
+  
   colnames(X) <- players
   
-  # Fill in player effects
-  for (i in 1:n_shifts) {
-    if (i %% 10000 == 0) {
-      message(paste("Processing shift", i, "of", n_shifts))
-    }
-    
-    home_player <- shifts_data$home_player[i]
-    away_player <- shifts_data$away_player[i]
-    
-    if (!is.na(home_player) && home_player %in% players) {
-      player_idx <- which(players == home_player)
-      X[i, player_idx] <- 1
-    }
-    
-    if (!is.na(away_player) && away_player %in% players) {
-      player_idx <- which(players == away_player)
-      X[i, player_idx] <- -1
-    }
-  }
-  
+  message("✓ Matrix created")
   return(X)
 }
 
-X <- create_rapm_matrix(shifts, all_players)
+# Create player design matrix
+X <- create_rapm_matrix_fast(shifts, all_players)
 
 # Response variable: win probability change
 y <- shifts$wp_change
 
 # Remove rows/columns with no variation
+message("Filtering valid shifts and players...")
 valid_shifts <- which(rowSums(X != 0) > 0)
 valid_players <- which(colSums(X != 0) > 0)
 
@@ -75,49 +85,68 @@ y_valid <- y[valid_shifts]
 
 message(paste("After filtering:", nrow(X_valid), "shifts and", ncol(X_valid), "players"))
 
-# Add team effects to control for team strength
-# Create team indicators
-teams_matrix <- Matrix(0, nrow = nrow(shifts), ncol = length(all_teams), sparse = TRUE)
-colnames(teams_matrix) <- all_teams
-
-for (i in 1:nrow(shifts)) {
-  if (i %% 10000 == 0) {
-    message(paste("Adding team effects:", i, "of", nrow(shifts)))
-  }
+# OPTIMIZATION 3: Vectorized team matrix
+create_team_matrix_fast <- function(shifts_data, teams) {
+  n_shifts <- nrow(shifts_data)
+  n_teams <- length(teams)
   
-  home_team <- shifts$home_team[i]
-  away_team <- shifts$away_team[i]
+  message("Creating team matrix (vectorized)...")
   
-  if (!is.na(home_team) && home_team %in% all_teams) {
-    team_idx <- which(all_teams == home_team)
-    teams_matrix[i, team_idx] <- 1
-  }
+  # Create team index lookup
+  team_lookup <- setNames(1:n_teams, teams)
   
-  if (!is.na(away_team) && away_team %in% all_teams) {
-    team_idx <- which(all_teams == away_team)
-    teams_matrix[i, team_idx] <- -1
-  }
+  # Find indices
+  home_indices <- match(shifts_data$home_team, teams)
+  away_indices <- match(shifts_data$away_team, teams)
+  
+  # Remove NAs
+  valid_home <- !is.na(home_indices)
+  valid_away <- !is.na(away_indices)
+  
+  # Build sparse matrix
+  i_indices <- c(which(valid_home), which(valid_away))
+  j_indices <- c(home_indices[valid_home], away_indices[valid_away])
+  values <- c(rep(1, sum(valid_home)), rep(-1, sum(valid_away)))
+  
+  teams_matrix <- sparseMatrix(
+    i = i_indices,
+    j = j_indices,
+    x = values,
+    dims = c(n_shifts, n_teams)
+  )
+  
+  colnames(teams_matrix) <- teams
+  message("✓ Team matrix created")
+  return(teams_matrix)
 }
 
+teams_matrix <- create_team_matrix_fast(shifts, all_teams)
+
 # Combine player and team effects
+message("Combining matrices...")
 X_combined <- cbind(X, teams_matrix)
 X_combined_valid <- X_combined[valid_shifts, ]
 
+message(paste("Combined matrix dimensions:", 
+              nrow(X_combined_valid), "x", ncol(X_combined_valid)))
+
+# OPTIMIZATION 4: Reduce CV folds for speed
+N_FOLDS <- 5  # Instead of 10
+
 # Fit Ridge Regression (L2 regularization)
-message("Fitting Ridge regression model...")
+message("\nFitting Ridge regression model...")
 set.seed(479)
 
-# Use cross-validation to select lambda
 cv_ridge <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
   alpha = 0,  # Ridge regression
-  nfolds = 10,
+  nfolds = N_FOLDS,  # Reduced from 10
   standardize = TRUE,
-  parallel = FALSE
+  parallel = FALSE,
+  type.measure = "mse"
 )
 
-# Fit model with best lambda
 ridge_model <- glmnet(
   x = X_combined_valid,
   y = y_valid,
@@ -127,8 +156,10 @@ ridge_model <- glmnet(
 )
 
 ridge_coefs <- coef(ridge_model)
-ridge_player_effects <- ridge_coefs[2:(length(all_players) + 1)]
+ridge_player_effects <- ridge_coefs[2:(length(valid_players) + 1)]
 names(ridge_player_effects) <- colnames(X_valid)
+
+message("✓ Ridge complete")
 
 # Fit Lasso Regression (L1 regularization)
 message("Fitting Lasso regression model...")
@@ -136,9 +167,10 @@ cv_lasso <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
   alpha = 1,  # Lasso regression
-  nfolds = 10,
+  nfolds = N_FOLDS,
   standardize = TRUE,
-  parallel = FALSE
+  parallel = FALSE,
+  type.measure = "mse"
 )
 
 lasso_model <- glmnet(
@@ -150,8 +182,10 @@ lasso_model <- glmnet(
 )
 
 lasso_coefs <- coef(lasso_model)
-lasso_player_effects <- lasso_coefs[2:(length(all_players) + 1)]
+lasso_player_effects <- lasso_coefs[2:(length(valid_players) + 1)]
 names(lasso_player_effects) <- colnames(X_valid)
+
+message("✓ Lasso complete")
 
 # Fit Elastic Net (combination)
 message("Fitting Elastic Net model...")
@@ -159,9 +193,10 @@ cv_elastic <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
   alpha = 0.5,  # Elastic net
-  nfolds = 10,
+  nfolds = N_FOLDS,
   standardize = TRUE,
-  parallel = FALSE
+  parallel = FALSE,
+  type.measure = "mse"
 )
 
 elastic_model <- glmnet(
@@ -173,10 +208,13 @@ elastic_model <- glmnet(
 )
 
 elastic_coefs <- coef(elastic_model)
-elastic_player_effects <- elastic_coefs[2:(length(all_players) + 1)]
+elastic_player_effects <- elastic_coefs[2:(length(valid_players) + 1)]
 names(elastic_player_effects) <- colnames(X_valid)
 
+message("✓ Elastic Net complete")
+
 # Compile RAPM results
+message("\nCompiling results...")
 rapm_results <- tibble(
   player = colnames(X_valid),
   ridge_rapm = as.numeric(ridge_player_effects),
@@ -191,7 +229,8 @@ player_stats <- player_games %>%
   summarise(
     games_played = n(),
     total_minutes = sum(min, na.rm = TRUE),
-    avg_minutes = mean(min, na.rm = TRUE)
+    avg_minutes = mean(min, na.rm = TRUE),
+    .groups = "drop"
   )
 
 rapm_results <- rapm_results %>%
@@ -216,6 +255,7 @@ message(paste("Lasso MSE:", round(min(cv_lasso$cvm), 6)))
 message(paste("Elastic MSE:", round(min(cv_elastic$cvm), 6)))
 
 # Save results
+dir.create("data/processed", showWarnings = FALSE, recursive = TRUE)
 rapm_output <- list(
   rapm_table = rapm_results,
   ridge_model = ridge_model,
@@ -239,4 +279,6 @@ print(rapm_results %>%
         select(player, ridge_rapm, games_played, avg_minutes) %>%
         head(20))
 
-message("\nRAPM fitting complete.")
+message("\n✓ RAPM fitting complete!")
+message(paste("Total players analyzed:", nrow(rapm_results)))
+

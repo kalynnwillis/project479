@@ -17,7 +17,7 @@ Rscript R/03_build_shifts.R 2>&1 | tail -15
 echo ""
 
 echo "Step 4: Fitting RAPM Models..."
-Rscript R/04_fit_rapm.R 2>&1 | tail -25
+Rscript R/04_fit_rapm_FAST.R 2>&1 | tail -25
 echo ""
 
 echo "Step 5: Generating Plots..."
