@@ -107,7 +107,7 @@ tibble(
   knitr::kable()
 ```
 
-**Source**: ncaahoopR package (2023-24 season)
+**Source**: hoopR package via ESPN API (2023-24 season)
 
 ## Results: RAPM Distribution
 
@@ -200,13 +200,15 @@ rapm_table %>%
 ## Key Findings {.smaller}
 
 ::: incremental
-1. **Elite players matter**: Top players add 2-3% WP per possession
+1. **Win Probability Modeling Success**: XGBoost achieved 0.895 AUC (excellent prediction)
 
-2. **Regularization works**: Stable estimates despite sparse data
+2. **Elite Players Impact**: Top players add 0.001-0.003 WP per possession
+   - Over 70 possessions/game = substantial win probability shifts
 
-3. **Minutes ≠ Value**: High-minute players can have negative RAPM
+3. **Regularization Critical**: Ridge RAPM stable; Lasso too conservative for noisy data
 
-4. **Model agreement**: Ridge, Lasso, Elastic Net highly correlated (r > 0.95)
+4. **Minutes ≠ Value**: Positive correlation but high-minute players can have negative RAPM
+   - Playing time driven by multiple factors beyond pure performance
 :::
 
 ## Interpretation Example {.smaller}
@@ -234,16 +236,24 @@ top_player <- rapm_table %>%
 - Equivalent to multiple wins per season
 :::
 
-## Limitations {.smaller}
+## Limitations & Solutions {.smaller}
 
 ::: incremental
-1. **Data quality**: Lineup approximations when exact data unavailable
+1. **Lineup Data Challenge**
+   - Play-by-play lacks exact lineup information
+   - **Solution**: Approximate using box score participation
+   - Result: Affects precision but not relative rankings
 
-2. **Sample size**: Few-game players have uncertain estimates
+2. **Regularization Impact**
+   - Lasso shrunk coefficients to zero (too conservative)
+   - **Solution**: Focus on Ridge RAPM
+   
+3. **Sample Size**: Few-game players have uncertain estimates
+   - **Solution**: Filter to ≥10 games for main analysis
 
-3. **Context missing**: Doesn't capture role, matchups, coaching
-
-4. **Endogeneity**: Good players face tougher opponents
+4. **Context & Selection**
+   - Missing: role, matchups, defensive attention
+   - **Mitigation**: Team fixed effects, regularization
 :::
 
 ## Future Directions {.smaller}
@@ -269,16 +279,16 @@ top_player <- rapm_table %>%
 <br>
 
 ::: incremental
-- ✅ Rigorous metric for player impact
-- ✅ Controls for context (teammates, opponents, teams)  
-- ✅ Regularization handles sparse data
-- ✅ Direct interpretation (change in WP)
+- ✅ Win probability models: Excellent prediction (AUC = 0.895)
+- ✅ Analyzed 2,044 players across 465 games
+- ✅ Ridge RAPM provides stable rankings despite data limitations
+- ✅ Direct interpretation: WP change per possession
 :::
 
 <br>
 
 ::: {.fragment}
-**Main takeaway**: Player contributions vary substantially, even among starters. Elite players can shift game outcomes by several percentage points per game.
+**Main takeaway**: Even with approximate lineup data, RAPM successfully identifies elite contributors. Top players shift win probability by 0.1-0.2 (10-20%) per game compared to average players. The methodology demonstrates that advanced analytics can extract meaningful insights from imperfect real-world data.
 :::
 
 ## Questions? {.smaller}
