@@ -336,8 +336,14 @@ rapm_table %>%
     Range_RAPM = Max_RAPM - Min_RAPM
   ) %>%
   pivot_longer(everything(), names_to = "Statistic", values_to = "Value") %>%
-  mutate(Value = round(Value, 5)) %>%
-  kable(caption = "RAPM Summary Statistics (≥10 games)") %>%
+  mutate(
+    # Format values for better readability
+    Value = case_when(
+      Statistic == "N_Players" ~ format(Value, big.mark = ",", scientific = FALSE),
+      TRUE ~ sprintf("%.7f", Value)
+    )
+  ) %>%
+  kable(caption = "RAPM Summary Statistics (≥10 games)", align = c("l", "r")) %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
@@ -346,7 +352,7 @@ rapm_table %>%
 ### Shooting Efficiency and RAPM
 
 ```{r shooting-analysis}
-#| fig-cap: "Relationship between free throw shooting and RAPM (colored by 3-point %)"
+#| fig-cap: "Relationship between free throw shooting and RAPM (colored by 3-point %). Elite two-way shooters (top-right, yellow/pink) cluster above zero."
 #| fig-width: 10
 #| fig-height: 6
 
@@ -355,9 +361,29 @@ if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
 }
 ```
 
-**Key Finding - The Two-Skill Paradox**: Individual shooting percentages show nearly zero correlation with RAPM (FT r=0.016, 3P r=-0.002), yet **elite shooters who excel at BOTH free throws AND three-pointers have significantly higher RAPM**:
+**What This Plot Reveals**:
 
-This paradox reveals that neither skill alone predicts winning impact, but their combination does. Elite shooters (FT>80%, 3P>35%) likely possess:
+Looking at the visualization, several patterns emerge:
+
+1. **Massive scatter**: Points are spread across the entire plot—FT% alone doesn't predict RAPM (correlation r=0.016)
+2. **Color gradient insight**: Blue points (low 3P%) and pink/yellow points (high 3P%) are mixed throughout—3P% alone doesn't predict RAPM either (r=-0.002)
+3. **The "magic corner"**: The **top-right region** (high FT% >80%, yellow/pink colors indicating high 3P% >35%) has noticeably **more points above the zero line** (positive RAPM)
+4. **Poor shooters everywhere**: Low FT% shooters (<60%) span the full RAPM range—some succeed despite poor shooting through other skills (defense, rebounding, playmaking)
+5. **No guarantees**: Even elite shooters (top-right) aren't guaranteed positive RAPM—shooting is necessary but not sufficient
+
+**Key Finding - The Two-Skill Paradox**: Individual shooting percentages show nearly zero correlation with RAPM (FT r=0.016, 3P r=-0.002), yet **elite shooters who excel at BOTH free throws AND three-pointers have significantly higher RAPM**.
+
+**Why This Paradox Exists**:
+
+The plot reveals that neither skill alone predicts winning impact, but their **combination** does. This isn't just about shooting mechanics—it's about:
+
+- **Shot selection**: Elite two-way shooters take high-value attempts (FTs worth 0.8+ PPP, 3Ps worth 1.0+ PPP)
+- **Basketball IQ**: Players who master both have better court awareness and decision-making
+- **Gravity effect**: Defenders must respect both threats, creating space for teammates
+- **Clutch performance**: Elite FT shooters close games; elite 3P shooters provide late-game options
+- **Work ethic signal**: Mastering both requires dedication that transfers to other areas
+
+Elite shooters (FT>80%, 3P>35%) likely possess:
 
 ```{r elite-shooters-stats}
 if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
@@ -498,6 +524,45 @@ These 275 players represent the **formula for winning basketball**: combining vo
 3. **Spacing & gravity**: Threat of both draws defenders and creates opportunities for teammates
 4. **Clutch performance**: Elite FT shooters close games; elite 3P shooters create late-game options
 5. **Winning habits**: Players who practice both develop better shot selection overall
+
+### Comparing Elite Shooters to Overall Top Players
+
+Comparing the **Top 30 Overall Players** with the **Top 20 Elite Shooters** reveals important patterns about the role of shooting in winning basketball:
+
+**Key Observations**:
+
+1. **Strong Overlap at the Top**: Several players appear in both lists, validating the elite shooting advantage:
+   - **Jalen Cone**: #1 overall AND #1 among elite shooters (dominant in both categories)
+   - **Donnell Gresham Jr.**: #2 in both (consistent excellence)
+   - **Dominick Pickett**: #10 overall, #3 among elite shooters
+   - **Sean Hoehn**: #28 overall, #4 among elite shooters
+   
+2. **Elite Shooting ≠ Guaranteed Top 30**: Many elite shooters (Kyle Guy, Alan Griffin, Trevor Stumpe, KJ Jenkins) provide strong positive RAPM without cracking the overall top 30. This shows:
+   - Elite shooting provides a **high floor** (consistent positive impact)
+   - But reaching the **elite ceiling** requires additional skills (defense, rebounding, playmaking)
+
+3. **Multiple Paths to Excellence**: Several top 30 players are NOT elite shooters:
+   - AJ Storr (#3), Derrick Brooks (#4), Vito Cubrilo (#5), Trevion Williams (#6)
+   - These players succeed through: elite defense, rebounding dominance, post scoring, playmaking, or hustle
+   - **Implication**: Elite shooting is a strong predictor but not the only path to high impact
+
+4. **Jalen Cone's Dominance**: His RAPM (~0.00136) is approximately **60% higher** than #2. He combines:
+   - Elite two-way shooting (84.8% FT, 37.4% 3P)
+   - High usage (132 games, 31.1 mpg)
+   - Guard responsibilities (ball-handling, decision-making)
+   - Exceptional consistency and durability
+
+5. **The Distribution Pattern**: 
+   - **Top 30 Overall**: One clear outlier (Cone), then relatively flat from #3-30
+   - **Elite Shooters**: Steeper drop-off after #2, more compressed distribution
+   - Suggests elite shooting alone creates a narrower performance range
+
+**Takeaway**: Elite two-way shooting is a **powerful but not exclusive** predictor of top performance. It provides:
+- A high probability of positive impact (necessary condition)
+- A pathway to elite status when combined with other skills (sufficient condition)
+- A repeatable, "sticky" advantage that translates across contexts
+
+However, **multiple archetypes succeed** in basketball—elite shooting is one proven formula among several. Teams should value elite shooters highly while recognizing that defense-first players, dominant rebounders, and elite playmakers can also provide top-tier impact.
 
 ## Detailed Example: Top Player Analysis
 

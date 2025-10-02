@@ -237,7 +237,7 @@ if ("ft_pct" %in% names(rapm_table)) {
     geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
     labs(
       title = "RAPM vs. Free Throw Shooting",
-      subtitle = "Color shows 3-point percentage (players with 20+ games)",
+      subtitle = "Color shows 3-point percentage | Look for yellow/pink dots in top-right corner",
       x = "Free Throw %",
       y = "RAPM"
     ) +
@@ -246,7 +246,13 @@ if ("ft_pct" %in% names(rapm_table)) {
 ```
 
 ::: {.notes}
-**Weak individual correlations** (FT% r=0.016, 3P% r=-0.002) reveal a paradox: neither skill alone predicts RAPM, but elite performance in BOTH does. This suggests synergy—players who master both free throws and three-pointers have winning habits beyond shooting alone (decision-making, shot selection, pressure performance).
+**Visual pattern**: Massive scatter everywhere—but notice the **TOP-RIGHT corner** (high FT%, yellow/pink = high 3P%). This "magic corner" has MORE points above zero (positive RAPM).
+
+**The paradox**: FT% alone (r=0.016) and 3P% alone (r=-0.002) barely predict RAPM. But **BOTH together** = winning formula. 
+
+**Why?** Not just shooting mechanics—it's basketball IQ, shot selection, gravity effect (defenders must respect both threats), and clutch performance. Elite two-way shooters take high-value shots, create space for teammates, and close games.
+
+**Bottom line**: Poor shooters CAN win through defense/rebounding, but elite two-way shooting provides a consistent, repeatable advantage.
 :::
 
 ## NEW: RAPM by Position {.smaller}
@@ -343,6 +349,56 @@ if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
 - Shot selection (high-value attempts)
 
 This skill combination is sticky (repeatable) and translates directly to winning.
+:::
+
+## Elite Shooters vs. Overall Top 30 {.smaller}
+
+**Comparing the lists reveals important patterns:**
+
+::: {.columns}
+::: {.column width="48%"}
+**Strong Overlap (Validates Shooting)**
+
+- Jalen Cone: #1 in BOTH
+- Donnell Gresham Jr.: #2 in BOTH
+- Dominick Pickett: #10 overall, #3 elite
+- Sean Hoehn: #28 overall, #4 elite
+
+<br>
+
+**Elite Shooting = High Floor**
+
+- Many elite shooters (Kyle Guy, Alan Griffin, etc.) have positive RAPM but miss top 30
+- Shooting provides consistency, not guaranteed dominance
+:::
+
+::: {.column width="48%"}
+**Multiple Paths to Excellence**
+
+Top 30 players NOT elite shooters:
+
+- AJ Storr (#3) - Different skillset
+- Derrick Brooks (#4) - Non-shooting star
+- Vito Cubrilo (#5) - Alternative path
+- Trevion Williams (#6) - Post dominance
+
+<br>
+
+**Success through:**
+
+- Elite defense
+- Rebounding dominance
+- Playmaking/facilitation
+- Post scoring & hustle
+:::
+:::
+
+::: {.notes}
+**Key insight**: Elite two-way shooting is a POWERFUL predictor of top performance, but NOT the only path. It provides a high floor (consistent positive impact) and a pathway to elite status when combined with other skills.
+
+**Jalen Cone is special**: 60% higher RAPM than #2. Elite shooting + usage + role + consistency.
+
+**For scouts/coaches**: Value elite shooters highly, but recognize multiple archetypes succeed—defense-first players, dominant rebounders, and elite playmakers can also provide top-tier impact.
 :::
 
 ## Key Findings {.smaller}
