@@ -203,14 +203,70 @@ if (file.exists(box_scores_file)) {
   message(paste("Retrieved box scores:", nrow(box_scores), "player-game records"))
 }
 
-# Create player-shift associations
-# Approximate: players who played > 10 minutes are "on court" for shifts
+# Create player-shift associations - ENHANCED with starter data
+# Improved heuristic: prioritize starters and high-minute players
 
 if (nrow(box_scores) > 0 && "min" %in% names(box_scores)) {
+  
+  # ENHANCEMENT 1: Create player skill profiles from shooting/defensive stats
+  message("Creating player skill profiles from enhanced box scores...")
+  
+  player_profiles <- box_scores %>%
+    group_by(player, team) %>%
+    summarise(
+      games_played = n(),
+      avg_min = mean(min, na.rm = TRUE),
+      is_regular_starter = mean(starter, na.rm = TRUE) >= 0.5,
+      
+      # Shooting efficiency
+      ft_made = sum(ftm, na.rm = TRUE),
+      ft_att = sum(fta, na.rm = TRUE),
+      ft_pct = ifelse(ft_att > 0, ft_made / ft_att, NA),
+      
+      fg3_made = sum(fg3m, na.rm = TRUE),
+      fg3_att = sum(fg3a, na.rm = TRUE),
+      fg3_pct = ifelse(fg3_att > 0, fg3_made / fg3_att, NA),
+      
+      fg_made = sum(fgm, na.rm = TRUE),
+      fg_att = sum(fga, na.rm = TRUE),
+      fg_pct = ifelse(fg_att > 0, fg_made / fg_att, NA),
+      
+      # Volume rates (per 40 minutes)
+      fta_per_40 = (ft_att / sum(min, na.rm = TRUE)) * 40,
+      fg3a_per_40 = (fg3_att / sum(min, na.rm = TRUE)) * 40,
+      
+      # Defensive stats (per 40 minutes)
+      stl_per_40 = (sum(stl, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+      blk_per_40 = (sum(blk, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+      tov_per_40 = (sum(tov, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+      
+      # Overall production
+      pts_per_min = sum(pts, na.rm = TRUE) / sum(min, na.rm = TRUE),
+      
+      # Position (most common)
+      position = names(sort(table(position), decreasing = TRUE))[1],
+      
+      .groups = 'drop'
+    )
+  
+  message(paste("Created profiles for", n_distinct(player_profiles$player), "players"))
+  
+  # ENHANCEMENT 2: Smarter player-game filtering using starter status
   player_games <- box_scores %>%
-    filter(min > 10) %>%  # Players with >10 minutes
-    select(game_id, team, player, min) %>%
-    distinct()
+    # Improved filter: starters OR players with significant minutes
+    filter(starter == TRUE | min >= 15) %>%  
+    select(game_id, team, player, min, starter) %>%
+    distinct() %>%
+    # Add a weight based on minutes and starter status
+    mutate(
+      lineup_weight = case_when(
+        starter == TRUE & min >= 20 ~ 1.0,   # Clear starters with good minutes
+        starter == TRUE & min >= 10 ~ 0.9,   # Starters with lower minutes
+        starter == FALSE & min >= 25 ~ 0.8,  # Key bench players
+        starter == FALSE & min >= 15 ~ 0.6,  # Rotation players
+        TRUE ~ 0.3                            # Others
+      )
+    )
   
   # Assign players to shifts based on game participation
   # This is a simplification - real RAPM would use exact lineup data
@@ -259,6 +315,15 @@ saveRDS(team_shifts, "data/interim/team_shifts.rds")
 saveRDS(shifts_with_players, "data/interim/player_shifts.rds")
 saveRDS(player_games, "data/interim/player_games.rds")
 
+# Save player profiles for use in RAPM
+if (exists("player_profiles")) {
+  saveRDS(player_profiles, "data/interim/player_profiles.rds")
+  message(paste("Saved player profiles for", nrow(player_profiles), "players"))
+}
+
 message("Shift building complete.")
 message(paste("Total team shifts:", nrow(team_shifts)))
 message(paste("Total player-shift observations:", nrow(shifts_with_players)))
+if (exists("player_profiles")) {
+  message(paste("Player profiles created:", nrow(player_profiles)))
+}

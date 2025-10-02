@@ -57,19 +57,50 @@ pbp_clean <- pbp %>%
   select(game_id, home, away, home_score, away_score, score_diff, 
          secs_remaining, half, home_win)
 
-# Box scores conversion
+# Box scores conversion - ENHANCED with shooting & defensive stats
 box_scores <- player_box %>%
   mutate(
     game_id = as.character(game_id),
     player = athlete_display_name,
     team = team_short_display_name,
     min = as.numeric(minutes),
+    
+    # Basic stats (existing)
     pts = as.numeric(points),
     reb = as.numeric(rebounds),
-    ast = as.numeric(assists)
+    ast = as.numeric(assists),
+    
+    # Shooting stats (NEW!)
+    fgm = as.numeric(field_goals_made),
+    fga = as.numeric(field_goals_attempted),
+    fg_pct = ifelse(!is.na(fga) & fga > 0, fgm / fga, NA),
+    
+    fg3m = as.numeric(three_point_field_goals_made),
+    fg3a = as.numeric(three_point_field_goals_attempted),
+    fg3_pct = ifelse(!is.na(fg3a) & fg3a > 0, fg3m / fg3a, NA),
+    
+    ftm = as.numeric(free_throws_made),
+    fta = as.numeric(free_throws_attempted),
+    ft_pct = ifelse(!is.na(fta) & fta > 0, ftm / fta, NA),
+    
+    # Defensive stats (NEW!)
+    oreb = as.numeric(offensive_rebounds),
+    dreb = as.numeric(defensive_rebounds),
+    stl = as.numeric(steals),
+    blk = as.numeric(blocks),
+    tov = as.numeric(turnovers),
+    pf = as.numeric(fouls),
+    
+    # Context variables (NEW!)
+    starter = as.logical(starter),
+    position = athlete_position_abbreviation,
+    home_away = home_away
   ) %>%
   filter(!is.na(min), min > 0) %>%
-  select(game_id, player, team, min, pts, reb, ast)
+  select(game_id, player, team, min, starter, position, home_away,
+         pts, reb, ast, oreb, dreb,
+         fgm, fga, fg_pct, fg3m, fg3a, fg3_pct, 
+         ftm, fta, ft_pct, stl, blk, tov, pf)
 
 # Save (directories created by 00_setup.R)
 saveRDS(pbp_clean, "data/raw/pbp_clean.rds")

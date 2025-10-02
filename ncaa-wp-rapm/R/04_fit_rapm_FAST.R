@@ -15,6 +15,17 @@ player_games <- readRDS("data/interim/player_games.rds")
 
 message(paste("Loaded", nrow(shifts), "shift observations"))
 
+# Load player profiles (if available from enhanced data extraction)
+player_profiles_file <- "data/interim/player_profiles.rds"
+if (file.exists(player_profiles_file)) {
+  player_profiles <- readRDS(player_profiles_file)
+  message(paste("Loaded player profiles for", nrow(player_profiles), "players"))
+  message("Player profiles will be used to enhance RAPM estimates")
+} else {
+  player_profiles <- NULL
+  message("No player profiles found - using basic RAPM")
+}
+
 # OPTIMIZATION 1: Sample shifts if dataset is too large
 MAX_SHIFTS <- 500000  # Limit for speed
 if (nrow(shifts) > MAX_SHIFTS) {
@@ -230,11 +241,37 @@ player_stats <- player_games %>%
     games_played = n(),
     total_minutes = sum(min, na.rm = TRUE),
     avg_minutes = mean(min, na.rm = TRUE),
+    is_starter = mean(starter, na.rm = TRUE) >= 0.5,  # NEW: starter status
     .groups = "drop"
   )
 
 rapm_results <- rapm_results %>%
   left_join(player_stats, by = "player")
+
+# Add player profiles if available (NEW!)
+if (!is.null(player_profiles)) {
+  # Aggregate profiles by player (some players may have played for multiple teams)
+  player_profile_summary <- player_profiles %>%
+    group_by(player) %>%
+    summarise(
+      position = first(position),
+      is_regular_starter = any(is_regular_starter),
+      ft_pct = weighted.mean(ft_pct, w = games_played, na.rm = TRUE),
+      fg3_pct = weighted.mean(fg3_pct, w = games_played, na.rm = TRUE),
+      fg_pct = weighted.mean(fg_pct, w = games_played, na.rm = TRUE),
+      fta_per_40 = weighted.mean(fta_per_40, w = games_played, na.rm = TRUE),
+      fg3a_per_40 = weighted.mean(fg3a_per_40, w = games_played, na.rm = TRUE),
+      stl_per_40 = weighted.mean(stl_per_40, w = games_played, na.rm = TRUE),
+      blk_per_40 = weighted.mean(blk_per_40, w = games_played, na.rm = TRUE),
+      pts_per_min = weighted.mean(pts_per_min, w = games_played, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  rapm_results <- rapm_results %>%
+    left_join(player_profile_summary, by = "player")
+  
+  message("✓ Added player shooting and defensive profiles to RAPM results")
+}
 
 # Compute percentile ranks
 rapm_results <- rapm_results %>%

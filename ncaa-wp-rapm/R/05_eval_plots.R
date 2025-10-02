@@ -78,6 +78,110 @@ p3 <- ggplot(rapm_table %>% filter(!is.na(games_played), games_played >= 5),
 ggsave("figs/rapm_vs_minutes.png", p3, width = 8, height = 6, dpi = 300)
 message("Saved: figs/rapm_vs_minutes.png")
 
+# NEW PLOT: RAPM vs Shooting Efficiency (uses enhanced data!)
+if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
+  message("Creating shooting efficiency plots with enhanced data...")
+  
+  # Plot: RAPM vs Free Throw Percentage
+  p_shooting1 <- rapm_table %>%
+    filter(games_played >= 20, !is.na(ft_pct), !is.na(fg3_pct)) %>%
+    ggplot(aes(x = ft_pct, y = ridge_rapm, color = fg3_pct)) +
+    geom_point(alpha = 0.6, size = 2.5) +
+    scale_color_viridis(option = "plasma", name = "3P%") +
+    geom_smooth(method = "lm", color = "red", se = TRUE, linetype = "dashed") +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+    labs(
+      title = "RAPM vs. Free Throw Shooting",
+      subtitle = "Color shows 3-point percentage (qualified players)",
+      x = "Free Throw %",
+      y = "RAPM (Ridge)"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"))
+  
+  ggsave("figs/rapm_vs_shooting.png", p_shooting1, width = 10, height = 6, dpi = 300)
+  message("Saved: figs/rapm_vs_shooting.png")
+}
+
+# NEW PLOT: RAPM by Position (uses enhanced data!)
+if ("position" %in% names(rapm_table)) {
+  message("Creating position analysis plots...")
+  
+  p_position <- rapm_table %>%
+    filter(games_played >= 20, !is.na(position), position %in% c("G", "F", "C")) %>%
+    ggplot(aes(x = position, y = ridge_rapm, fill = position)) +
+    geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    scale_fill_manual(values = c("G" = "#1f77b4", "F" = "#ff7f0e", "C" = "#2ca02c")) +
+    labs(
+      title = "RAPM Distribution by Position",
+      subtitle = "Guards vs Forwards vs Centers",
+      x = "Position",
+      y = "RAPM (Ridge)"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"), legend.position = "none")
+  
+  ggsave("figs/rapm_by_position.png", p_position, width = 8, height = 6, dpi = 300)
+  message("Saved: figs/rapm_by_position.png")
+}
+
+# NEW PLOT: Starters vs Bench (uses enhanced data!)
+if ("is_starter" %in% names(rapm_table)) {
+  message("Creating starter vs bench comparison...")
+  
+  p_starter <- rapm_table %>%
+    filter(games_played >= 20, !is.na(is_starter)) %>%
+    mutate(role = ifelse(is_starter, "Starter", "Bench")) %>%
+    ggplot(aes(x = role, y = ridge_rapm, fill = role)) +
+    geom_violin(alpha = 0.7, draw_quantiles = c(0.25, 0.5, 0.75)) +
+    geom_jitter(alpha = 0.2, width = 0.2, size = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    scale_fill_manual(values = c("Starter" = "#2ecc71", "Bench" = "#e74c3c")) +
+    labs(
+      title = "RAPM: Starters vs Bench Players",
+      subtitle = "Violin plot showing distribution with quartiles",
+      x = "Player Role",
+      y = "RAPM (Ridge)"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold"), legend.position = "none")
+  
+  ggsave("figs/rapm_starters_vs_bench.png", p_starter, width = 8, height = 6, dpi = 300)
+  message("Saved: figs/rapm_starters_vs_bench.png")
+}
+
+# NEW PLOT: Elite Shooters with High RAPM
+if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
+  message("Creating elite shooters visualization...")
+  
+  elite_shooters <- rapm_table %>%
+    filter(games_played >= 20, ft_pct > 0.80, fg3_pct > 0.35) %>%
+    arrange(desc(ridge_rapm)) %>%
+    head(20)
+  
+  if (nrow(elite_shooters) > 0) {
+    p_elite <- ggplot(elite_shooters, aes(x = reorder(player, ridge_rapm), y = ridge_rapm)) +
+      geom_col(aes(fill = ridge_rapm), show.legend = FALSE) +
+      scale_fill_viridis(option = "plasma") +
+      coord_flip() +
+      labs(
+        title = "Top 20 Elite Shooters by RAPM",
+        subtitle = "Players with FT% > 80% AND 3P% > 35%",
+        x = "Player",
+        y = "RAPM (Ridge)"
+      ) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(face = "bold"),
+        axis.text.y = element_text(size = 9)
+      )
+    
+    ggsave("figs/elite_shooters_rapm.png", p_elite, width = 10, height = 8, dpi = 300)
+    message("Saved: figs/elite_shooters_rapm.png")
+  }
+}
+
 # Plot 4: Ridge vs Lasso vs Elastic Net comparison
 # Check if Lasso has variation
 lasso_var <- var(rapm_table$lasso_rapm, na.rm = TRUE)
