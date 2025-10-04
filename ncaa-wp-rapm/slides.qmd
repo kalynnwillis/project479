@@ -393,12 +393,18 @@ Top 30 players NOT elite shooters:
 :::
 :::
 
-::: {.notes}
-**Key insight**: Elite two-way shooting is a POWERFUL predictor of top performance, but NOT the only path. It provides a high floor (consistent positive impact) and a pathway to elite status when combined with other skills.
+## Elite Shooters vs. Overall Top 30 (cont.) {.smaller}
 
-**Jalen Cone is special**: 60% higher RAPM than #2. Elite shooting + usage + role + consistency.
+**Key Insights:**
 
-**For scouts/coaches**: Value elite shooters highly, but recognize multiple archetypes succeed—defense-first players, dominant rebounders, and elite playmakers can also provide top-tier impact.
+::: incremental
+- **Elite two-way shooting** is a POWERFUL predictor of top performance, but NOT the only path
+
+- Provides a **high floor** (consistent positive impact) and pathway to elite status when combined with other skills
+
+- **Jalen Cone is special**: 60% higher RAPM than #2 (Elite shooting + usage + role + consistency)
+
+- **For scouts/coaches**: Value elite shooters highly, but recognize multiple archetypes succeed—defense-first players, dominant rebounders, and elite playmakers can also provide top-tier impact
 :::
 
 ## Key Findings {.smaller}
@@ -417,16 +423,20 @@ Top 30 players NOT elite shooters:
    - Playing time is NOT a predictor of per-possession value
    - Many high-minute players have negative RAPM; many low-minute players have positive RAPM
    - Reveals market inefficiency: underutilized high-value bench players
+:::
 
-5. **NEW - Shooting Matters**: Elite shooters (FT>80%, 3P>35%) provide **significant positive impact**
+## Key Findings (cont.) {.smaller}
+
+::: incremental
+5. **Shooting Matters**: Elite shooters (FT>80%, 3P>35%) provide **significant positive impact**
    - Average RAPM: +0.0000084 (vs median -0.0000037)
    - Combines volume, efficiency, and decision-making
 
-6. **NEW - Position Effects**: Minimal differences between G/F/C
+6. **Position Effects**: Minimal differences between G/F/C
    - Individual skill variation >> positional variation
    - Modern basketball is increasingly positionless
 
-7. **NEW - Starter Advantage**: Modest but with huge overlap
+7. **Starter Advantage**: Modest but with huge overlap
    - Starters: -0.0000008 RAPM, 27.2 mpg
    - Bench: -0.0000162 RAPM, 22.5 mpg
    - Many bench players outperform starters per possession
