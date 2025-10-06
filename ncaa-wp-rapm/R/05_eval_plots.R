@@ -14,8 +14,9 @@ message("Generating evaluation plots...")
 rapm_results <- readRDS("data/processed/rapm_results.rds")
 wp_models <- readRDS("data/interim/wp_models.rds")
 
-# Extract RAPM table
+# Extract RAPM table and conference effects
 rapm_table <- rapm_results$rapm_table
+conference_effects <- rapm_results$conference_effects
 
 # ============================================================================
 # WP MODEL CALIBRATION PLOTS (CRITICAL!)
@@ -79,6 +80,37 @@ if (!is.null(wp_models$calibration_curves)) {
   message("Saved: figs/wp_calibration_best.png")
 } else {
   message("Warning: No calibration data found in wp_models")
+}
+
+# ============================================================================
+# CONFERENCE EFFECTS PLOT (NEW!)
+# ============================================================================
+message("\n=== Creating Conference Effects Plot ===")
+
+if (!is.null(conference_effects) && nrow(conference_effects) > 0) {
+  p_conf <- ggplot(conference_effects, aes(x = reorder(conference, ridge_conf_per40), y = ridge_conf_per40)) +
+    geom_col(aes(fill = ridge_conf_per40 > 0), show.legend = FALSE) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
+    scale_fill_manual(values = c("FALSE" = "#d62728", "TRUE" = "#2ca02c")) +
+    coord_flip() +
+    labs(
+      title = "Conference Fixed Effects (Ridge RAPM per 40 min)",
+      subtitle = "Adjusts for schedule strength: not all teams play each other",
+      x = "Conference",
+      y = "Effect on ΔWP per 40 Minutes",
+      caption = "Positive = conference teams perform better than expected given rosters"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      plot.subtitle = element_text(size = 10),
+      axis.text.y = element_text(size = 10)
+    )
+
+  ggsave("figs/conference_effects.png", p_conf, width = 10, height = 6, dpi = 300)
+  message("Saved: figs/conference_effects.png")
+} else {
+  message("Warning: No conference effects data found")
 }
 
 # Plot 1: Top 30 Players by RAPM
