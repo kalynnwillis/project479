@@ -94,7 +94,7 @@ games_in_analysis <- unique(pbp_data$game_id) # Use ALL games, not just WP sampl
 
 starters <- box_scores %>%
   filter(starter == TRUE, game_id %in% games_in_analysis) %>%
-  select(game_id, team, player, min, position) %>%
+  select(game_id, team, player_id, player, min, position) %>%
   arrange(game_id, team, desc(min))
 
 # Check starter quality: we need exactly 5 starters per team per game
