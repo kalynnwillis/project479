@@ -46,6 +46,8 @@ pbp_clean <- pbp %>%
     game_id = as.character(game_id),
     home = home_team_name,
     away = away_team_name,
+    # Keep season for fixed effects (NEW!)
+    season = as.integer(season),
     # Keep period for better tracking
     period_number = period_number,
     # Keep play type for shift detection
@@ -60,7 +62,7 @@ pbp_clean <- pbp %>%
   ) %>%
   ungroup() %>%
   select(
-    game_id, home, away, home_score, away_score, score_diff,
+    game_id, season, home, away, home_score, away_score, score_diff,
     secs_remaining, half, period_number, play_type, play_text, home_win
   )
 
@@ -68,6 +70,7 @@ pbp_clean <- pbp %>%
 box_scores <- player_box %>%
   mutate(
     game_id = as.character(game_id),
+    season = as.integer(season), # NEW: Keep season
     player = athlete_display_name,
     team = team_short_display_name,
     min = as.numeric(minutes),
@@ -103,7 +106,7 @@ box_scores <- player_box %>%
   ) %>%
   filter(!is.na(min), min > 0) %>%
   select(
-    game_id, player, team, min, starter, position, home_away,
+    game_id, season, player, team, min, starter, position, home_away,
     pts, reb, ast, oreb, dreb,
     fgm, fga, fg_pct, fg3m, fg3a, fg3_pct,
     ftm, fta, ft_pct, stl, blk, tov, pf

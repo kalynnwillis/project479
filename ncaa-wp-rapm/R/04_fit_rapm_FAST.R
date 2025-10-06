@@ -180,9 +180,9 @@ message(paste("After filtering:", nrow(X_valid), "shifts and", ncol(X_valid), "p
 message(paste("Median shift weight:", round(median(weights_valid), 2)))
 
 # ============================================================================
-# TEAM & CONFERENCE MATRICES (create ONLY for valid shifts - MUCH faster!)
+# TEAM, CONFERENCE & SEASON MATRICES (create ONLY for valid shifts - MUCH faster!)
 # ============================================================================
-message("\n=== Creating team and conference fixed effects ===")
+message("\n=== Creating team, conference, and season fixed effects ===")
 
 # Map teams to conferences ONCE
 team_conf_map <- data.frame(
@@ -198,12 +198,16 @@ shifts_valid_conf <- shifts_valid %>%
   rename(away_conf = conference)
 
 all_conferences <- sort(unique(c(shifts_valid_conf$home_conf, shifts_valid_conf$away_conf)))
-message(paste("Conferences:", length(all_conferences)))
+all_seasons <- sort(unique(shifts_valid$season))
 
-# OPTIMIZED: Build both matrices in one pass for VALID shifts only
+message(paste("Conferences:", length(all_conferences)))
+message(paste("Seasons:", paste(all_seasons, collapse = ", ")))
+
+# OPTIMIZED: Build all matrices in one pass for VALID shifts only
 n_valid <- nrow(shifts_valid_conf)
 n_teams <- length(all_teams)
 n_conf <- length(all_conferences)
+n_seasons <- length(all_seasons)
 
 message(paste("Building matrices for", n_valid, "valid shifts..."))
 
@@ -237,11 +241,23 @@ conf_matrix_valid <- sparseMatrix(
 )
 colnames(conf_matrix_valid) <- all_conferences
 
-message("✓ Matrices created (no subsetting needed!)")
+# Season matrix (indicator for each season)
+season_idx <- match(shifts_valid$season, all_seasons)
+valid_season <- !is.na(season_idx)
+
+season_matrix_valid <- sparseMatrix(
+  i = which(valid_season),
+  j = season_idx[valid_season],
+  x = rep(1L, sum(valid_season)),
+  dims = c(n_valid, n_seasons)
+)
+colnames(season_matrix_valid) <- paste0("Season_", all_seasons)
+
+message("✓ Team, conference, and season matrices created (no subsetting needed!)")
 
 # FAST: Combine matrices (all already same size)
 message("Combining matrices...")
-X_combined_valid <- cbind(X_valid, teams_matrix_valid, conf_matrix_valid)
+X_combined_valid <- cbind(X_valid, teams_matrix_valid, conf_matrix_valid, season_matrix_valid)
 
 message(paste(
   "Combined matrix dimensions:",
@@ -286,12 +302,15 @@ ridge_coefs <- coef(ridge_model)
 ridge_player_effects <- ridge_coefs[2:(length(valid_players) + 1)]
 names(ridge_player_effects) <- colnames(X_valid)
 
-# Also extract team and conference effects
+# Also extract team, conference, and season effects
 n_players <- length(valid_players)
 n_teams <- ncol(teams_matrix_valid)
 n_conferences <- length(all_conferences)
+n_seasons_fx <- ncol(season_matrix_valid)
+
 ridge_team_effects <- ridge_coefs[(n_players + 2):(n_players + n_teams + 1)]
 ridge_conf_effects <- ridge_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
+ridge_season_effects <- ridge_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
 
 message(paste("✓ Ridge complete in", round(difftime(Sys.time(), t_ridge_start, units = "mins"), 1), "minutes"))
 
@@ -323,9 +342,10 @@ lasso_coefs <- coef(lasso_model)
 lasso_player_effects <- lasso_coefs[2:(length(valid_players) + 1)]
 names(lasso_player_effects) <- colnames(X_valid)
 
-# Extract team and conference effects
+# Extract team, conference, and season effects
 lasso_team_effects <- lasso_coefs[(n_players + 2):(n_players + n_teams + 1)]
 lasso_conf_effects <- lasso_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
+lasso_season_effects <- lasso_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
 
 message("✓ Lasso complete")
 
@@ -357,9 +377,10 @@ elastic_coefs <- coef(elastic_model)
 elastic_player_effects <- elastic_coefs[2:(length(valid_players) + 1)]
 names(elastic_player_effects) <- colnames(X_valid)
 
-# Extract team and conference effects
+# Extract team, conference, and season effects
 elastic_team_effects <- elastic_coefs[(n_players + 2):(n_players + n_teams + 1)]
 elastic_conf_effects <- elastic_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
+elastic_season_effects <- elastic_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
 
 message("✓ Elastic Net complete")
 
@@ -479,6 +500,22 @@ conference_effects <- tibble(
 
 message("\n=== Conference Effects (Ridge per 40 min) ===")
 print(conference_effects %>% select(conference, ridge_conf_per40))
+
+# Compile season effects
+season_effects <- tibble(
+  season = all_seasons,
+  ridge_season = as.numeric(ridge_season_effects),
+  lasso_season = as.numeric(lasso_season_effects),
+  elastic_season = as.numeric(elastic_season_effects)
+) %>%
+  mutate(
+    ridge_season_per40 = ridge_season * 40,
+    lasso_season_per40 = lasso_season * 40,
+    elastic_season_per40 = elastic_season * 40
+  )
+
+message("\n=== Season Effects (Ridge per 40 min) ===")
+print(season_effects %>% select(season, ridge_season_per40))
 
 # FIX C: Use full box scores for games_played (not just starts)
 # This join brings in: total_minutes, games_played, avg_minutes
@@ -613,6 +650,7 @@ rapm_output <- list(
   rapm_1500min = rapm_1500min, # Sensitivity: ≥1500 minutes
   rapm_2500min = rapm_2500min, # Sensitivity: ≥2500 minutes
   conference_effects = conference_effects, # Conference fixed effects
+  season_effects = season_effects, # NEW: Season fixed effects
   ridge_model = ridge_model,
   lasso_model = lasso_model,
   elastic_model = elastic_model,
@@ -639,6 +677,7 @@ write_csv(rapm_results_filtered, "tables/rapm_rankings.csv")
 write_csv(rapm_1500min, "tables/rapm_rankings_1500min.csv")
 write_csv(rapm_2500min, "tables/rapm_rankings_2500min.csv")
 write_csv(conference_effects, "tables/conference_effects.csv")
+write_csv(season_effects, "tables/season_effects.csv")
 
 # Print top players
 message("\n=== Top 20 Players (Ridge RAPM per 40 min) ===")
