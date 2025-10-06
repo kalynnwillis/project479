@@ -63,18 +63,9 @@ pbp_clean <- pbp %>%
     home_win = ifelse(last(score_diff) > 0, 1, 0)
   ) %>%
   ungroup() %>%
-  # Join conference info based on team IDs
-  left_join(team_lookup %>% select(team_id, conference),
-    by = c("home_team_id" = "team_id")
-  ) %>%
-  rename(home_conference = conference) %>%
-  left_join(team_lookup %>% select(team_id, conference),
-    by = c("away_team_id" = "team_id")
-  ) %>%
-  rename(away_conference = conference) %>%
+  # Note: Conference mapping done in RAPM script via conference_map.R
   select(
     game_id, season, home_team_id, away_team_id, home, away,
-    home_conference, away_conference,
     home_score, away_score, score_diff,
     secs_remaining, half, period_number, play_type, play_text, home_win
   )
@@ -85,7 +76,8 @@ box_scores <- player_box %>%
     game_id = as.character(game_id),
     season = as.integer(season),
     team_id = as.character(team_id), # NEW: Keep team ID
-    player = athlete_display_name,
+    player_id = as.character(athlete_id), # CRITICAL: Use athlete ID for joins
+    player = athlete_display_name, # Keep for display only
     team = team_short_display_name,
     min = as.numeric(minutes),
 
@@ -120,7 +112,7 @@ box_scores <- player_box %>%
   ) %>%
   filter(!is.na(min), min > 0) %>%
   select(
-    game_id, season, player, team, min, starter, position, home_away,
+    game_id, season, player_id, player, team, min, starter, position, home_away,
     pts, reb, ast, oreb, dreb,
     fgm, fga, fg_pct, fg3m, fg3a, fg3_pct,
     ftm, fta, ft_pct, stl, blk, tov, pf
@@ -129,7 +121,6 @@ box_scores <- player_box %>%
 # Save (directories created by 00_setup.R)
 saveRDS(pbp_clean, "data/raw/pbp_clean.rds")
 saveRDS(box_scores, "data/interim/box_scores.rds")
-saveRDS(team_lookup, "data/interim/team_lookup.rds") # NEW: Save team/conference mapping
 
 # Summary
 message("\n===================================")
@@ -139,7 +130,7 @@ message(paste("Season:", SEASON))
 message(paste("Games:", n_distinct(pbp_clean$game_id)))
 message(paste("Plays:", nrow(pbp_clean)))
 message(paste("Player-game records:", nrow(box_scores)))
-message(paste("Unique players:", n_distinct(box_scores$player)))
+message(paste("Unique players (by ID):", n_distinct(box_scores$player_id)))
 message(paste("Unique teams:", n_distinct(box_scores$team)))
 
 message("\nFiles saved:")

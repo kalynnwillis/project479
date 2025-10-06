@@ -31,6 +31,7 @@ required_packages <- c(
   "gbm",
   "xgboost",
   "randomForest",
+  "ranger", # Memory-efficient Random Forest used in WP models
   "pROC",
   "knitr",
   "kableExtra",

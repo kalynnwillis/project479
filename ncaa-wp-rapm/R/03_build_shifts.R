@@ -201,35 +201,39 @@ message(paste("Mean leverage weight:", round(mean(team_shifts$leverage), 2)))
 message("\n=== PREPARING STARTER LISTS FOR RAPM ===")
 
 # Get starters for each game (5 per team)
+# CRITICAL: Use player_id for joins, keep player name for display
 game_starters <- starters %>%
   filter(game_id %in% good_games) %>%
   group_by(game_id, team) %>%
   slice_max(order_by = min, n = 5, with_ties = FALSE) %>%
   ungroup() %>%
-  select(game_id, team, player, position, min)
+  select(game_id, team, player_id, player, position, min)
 
 # Create starter lists for each stint (no Cartesian product!)
+# CRITICAL: Use player_id for matrix building, keep player name for display
 stint_starters <- team_shifts %>%
   left_join(
-    game_starters %>% select(game_id, team, player),
+    game_starters %>% select(game_id, team, player_id, player),
     by = c("game_id", "home_team" = "team"),
     relationship = "many-to-many"
   ) %>%
-  rename(home_starter = player) %>%
+  rename(home_starter_id = player_id, home_starter = player) %>%
   left_join(
-    game_starters %>% select(game_id, team, player),
+    game_starters %>% select(game_id, team, player_id, player),
     by = c("game_id", "away_team" = "team"),
     relationship = "many-to-many"
   ) %>%
-  rename(away_starter = player) %>%
-  filter(!is.na(home_starter), !is.na(away_starter)) %>%
-  # Keep one row per stint with lists of starters
+  rename(away_starter_id = player_id, away_starter = player) %>%
+  filter(!is.na(home_starter_id), !is.na(away_starter_id)) %>%
+  # Keep one row per stint with lists of starter IDs (for matrix) and names (for display)
   group_by(stint_id, game_id, season, half, home_team, away_team, wp_change, duration, leverage) %>%
   summarise(
+    home_starters_id = list(unique(home_starter_id)),
     home_starters = list(unique(home_starter)),
+    away_starters_id = list(unique(away_starter_id)),
     away_starters = list(unique(away_starter)),
-    n_home = n_distinct(home_starter),
-    n_away = n_distinct(away_starter),
+    n_home = n_distinct(home_starter_id),
+    n_away = n_distinct(away_starter_id),
     .groups = "drop"
   ) %>%
   # Keep only stints with full 5v5 lineups
@@ -237,20 +241,22 @@ stint_starters <- team_shifts %>%
 
 message(paste("Stints with full 5v5 lineups:", nrow(stint_starters)))
 message(paste(
-  "Total unique players:",
+  "Total unique players (by ID):",
   n_distinct(c(
-    unlist(stint_starters$home_starters),
-    unlist(stint_starters$away_starters)
+    unlist(stint_starters$home_starters_id),
+    unlist(stint_starters$away_starters_id)
   ))
 ))
 
 # Step 5: Create player profiles for context
 message("\n=== CREATING PLAYER PROFILES ===")
 
+# CRITICAL: Group by player_id, keep latest player name for display
 player_profiles <- box_scores %>%
   filter(game_id %in% good_games) %>%
-  group_by(player, team) %>%
+  group_by(player_id, team) %>%
   summarise(
+    player = dplyr::last(player), # Most recent name for this player_id
     games_played = n(),
     avg_min = mean(min, na.rm = TRUE),
     is_regular_starter = mean(starter, na.rm = TRUE) >= 0.5,
@@ -297,8 +303,8 @@ data_quality <- list(
   coverage_pct = 100 * length(good_games) / length(games_in_analysis),
   total_stints = nrow(stint_starters),
   unique_players = n_distinct(c(
-    unlist(stint_starters$home_starters),
-    unlist(stint_starters$away_starters)
+    unlist(stint_starters$home_starters_id),
+    unlist(stint_starters$away_starters_id)
   )),
   median_stint_duration_sec = median(stint_starters$duration),
   mean_leverage = mean(stint_starters$leverage),

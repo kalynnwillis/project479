@@ -56,9 +56,11 @@ if (nrow(shifts) > MAX_SHIFTS) {
 }
 
 # FIX B: Build minutes/games per player from FULL box scores (not just starters)
+# CRITICAL: Group by player_id, not player name
 minutes_per_player <- box_scores %>%
-  group_by(player) %>%
+  group_by(player_id) %>%
   summarise(
+    player = dplyr::last(player), # Most recent name for display
     total_minutes = sum(min, na.rm = TRUE),
     games_played = n(),
     avg_minutes = total_minutes / games_played,
@@ -70,13 +72,13 @@ MIN_MINUTES <- 2000 # Multi-season data: ~1-2 solid seasons (60 games × 30 min)
 MIN_GAMES <- 50 # Multi-season data: ~1-2 seasons of regular play
 keep_players <- minutes_per_player %>%
   filter(total_minutes >= MIN_MINUTES, games_played >= MIN_GAMES) %>%
-  pull(player)
+  pull(player_id) # Use player_id, not player name
 
 message(paste("Players meeting thresholds (≥", MIN_MINUTES, "min, ≥", MIN_GAMES, "games):", length(keep_players)))
 
-# Get unique players from starter lists, filtered by sample size
-all_players_raw <- sort(unique(c(unlist(shifts$home_starters), unlist(shifts$away_starters))))
-all_players <- intersect(all_players_raw, keep_players) # FILTER HERE
+# Get unique players from starter lists (using IDs), filtered by sample size
+all_players_raw <- sort(unique(c(unlist(shifts$home_starters_id), unlist(shifts$away_starters_id))))
+all_players <- intersect(all_players_raw, keep_players) # FILTER HERE by player_id
 all_teams <- unique(c(shifts$home_team, shifts$away_team))
 
 message(paste("Players in RAPM (after filtering):", length(all_players)))
@@ -99,8 +101,8 @@ create_rapm_matrix_from_lists <- function(stints_data, players) {
   values <- numeric()
 
   for (stint_idx in 1:n_stints) {
-    # Home starters: +1
-    home_players <- stints_data$home_starters[[stint_idx]]
+    # Home starters: +1 (use ID lists)
+    home_players <- stints_data$home_starters_id[[stint_idx]]
     home_idx <- player_lookup[home_players]
     home_idx <- home_idx[!is.na(home_idx)]
 
@@ -110,8 +112,8 @@ create_rapm_matrix_from_lists <- function(stints_data, players) {
       values <- c(values, rep(1, length(home_idx)))
     }
 
-    # Away starters: -1
-    away_players <- stints_data$away_starters[[stint_idx]]
+    # Away starters: -1 (use ID lists)
+    away_players <- stints_data$away_starters_id[[stint_idx]]
     away_idx <- player_lookup[away_players]
     away_idx <- away_idx[!is.na(away_idx)]
 
@@ -178,6 +180,10 @@ message(paste("Time-decay applied: half-life =", half_life, "seasons"))
 message(paste("  Season", current_season, "weight: 1.00"))
 message(paste("  Season", current_season - 1, "weight:", round(exp(-decay_lambda * 1), 2)))
 message(paste("  Season", current_season - 2, "weight:", round(exp(-decay_lambda * 2), 2)))
+
+# CRITICAL: Re-normalize after time-decay to keep total weight stable
+weights <- weights * (length(weights) / sum(weights))
+message(paste("Re-normalized after decay: total weight =", round(sum(weights))))
 
 # Remove rows/columns with no variation and ensure finite values
 message("Filtering valid shifts and players...")
@@ -489,7 +495,7 @@ message(paste(
 # Compile RAPM results
 message("\nCompiling results...")
 rapm_results <- tibble(
-  player = colnames(X_valid),
+  player_id = colnames(X_valid), # Store player_id as the key
   baseline_apm = as.numeric(baseline_player_effects), # NEW: Unregularized
   ridge_rapm = as.numeric(ridge_player_effects),
   lasso_rapm = as.numeric(lasso_player_effects),
@@ -531,15 +537,15 @@ message("\n=== Season Effects (Ridge per 40 min) ===")
 print(season_effects %>% select(season, ridge_season_per40))
 
 # FIX C: Use full box scores for games_played (not just starts)
-# This join brings in: total_minutes, games_played, avg_minutes
+# This join brings in: player name, total_minutes, games_played, avg_minutes
 rapm_results <- rapm_results %>%
-  left_join(minutes_per_player, by = "player")
+  left_join(minutes_per_player, by = "player_id")
 
 # Add player profiles if available (NEW!)
 if (!is.null(player_profiles)) {
-  # Aggregate profiles by player (some players may have played for multiple teams)
+  # Aggregate profiles by player_id (some players may have played for multiple teams)
   player_profile_summary <- player_profiles %>%
-    group_by(player) %>%
+    group_by(player_id) %>%
     summarise(
       position = first(position),
       is_regular_starter = any(is_regular_starter),
@@ -555,7 +561,7 @@ if (!is.null(player_profiles)) {
     )
 
   rapm_results <- rapm_results %>%
-    left_join(player_profile_summary, by = "player")
+    left_join(player_profile_summary, by = "player_id")
 
   message("✓ Added player shooting and defensive profiles to RAPM results")
 }
@@ -703,7 +709,7 @@ top_20 <- rapm_results_filtered %>%
   head(20)
 
 message("\nTOP 3 PLAYERS:")
-for (i in 1:min(3, nrow(top_20))) {
+for (i in seq_len(min(3, nrow(top_20)))) {
   message(sprintf(
     "%d. %-25s Ridge: %.3f | Baseline: %.3f | Games: %3d | Mins: %4d",
     i,

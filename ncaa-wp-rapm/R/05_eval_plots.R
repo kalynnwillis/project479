@@ -115,8 +115,9 @@ if (!is.null(conference_effects) && nrow(conference_effects) > 0) {
 
 # Plot 1: Top 30 Players by RAPM
 # Filter: only players with sufficient data in our RAPM analysis
+# Note: player_id is the key, player is the display name
 top_players <- rapm_table %>%
-  filter(!is.na(games_played), games_played >= 5, !is.na(ridge_rapm)) %>%
+  filter(!is.na(games_played), games_played >= 5, !is.na(ridge_rapm), !is.na(player)) %>%
   arrange(desc(ridge_rapm)) %>%
   head(30)
 
@@ -129,7 +130,7 @@ if (nrow(top_players) == 0) {
     coord_flip() +
     labs(
       title = "Top 30 Players by RAPM (Ridge)",
-      subtitle = "Regularized Adjusted Plus-Minus on Win Probability Scale",
+      subtitle = "Regularized Adjusted Plus-Minus on Win Probability Scale (by unique player ID)",
       x = "Player",
       y = "RAPM (WP Change per Possession)"
     ) +
