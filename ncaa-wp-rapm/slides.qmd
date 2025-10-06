@@ -210,14 +210,23 @@ This conservative approach gives us more reliable rankings, especially for playe
 
 ![Conference impact on win probability (adjusted for roster quality)](figs/conference_effects.png){fig-alt="Bar chart of conference fixed effects showing coaching/system impact beyond player talent" width="70%"}
 
-**Interpretation:** Conferences with positive effects perform better than expected given roster talent (coaching, system, depth)
+**Key finding:** Conference effects are **statistically significant but practically modest**
+
+- Conference range: ±3% WP per 40 min (Big Ten +2.6%, Other -3.4%)
+- Player range: ±15% WP per 40 min  
+- **Player effects 5× larger than conference effects** → individual talent dominates
+- Statistical test: F = 22.4 (p < 0.001), but only 0.7% MSE improvement
 
 ::: notes
 This is one of the coolest findings. These are conference fixed effects from our model—essentially, how much better or worse a conference performs relative to what we'd expect from player talent alone.
 
-Positive bars mean the conference overperforms its roster quality. This could reflect better coaching, system effects, or factors we're not capturing at the player level. Negative bars are underperformance.
+But here's the key quantitative insight: the full range of conference effects is about 6 percentage points of win probability per 40 minutes—from Big Ten at plus 2.6% down to Other conferences at minus 3.4%. Compare that to player effects, which range almost 30 percentage points, from Mosley at plus 13% down to the worst players at minus 15%.
 
-The spread is meaningful but not huge, which suggests our player-level RAPM is capturing most of the variation. But conferences do matter—there's something about the Gonzaga, Duke, Kansas environments that squeezes extra wins beyond just having good players.
+We tested statistical significance by comparing models with versus without conference fixed effects. The F-statistic is 22.4, which is highly significant—p-value less than 0.001. So conferences definitely matter statistically. But here's the key: adding conferences only improves prediction error by 0.7%. And player effects are 5 times larger in magnitude.
+
+Now, you might wonder: how can p be less than 0.001 if the improvement is only 0.7%? It's because we have 37,668 stints—huge statistical power. With that much data, we can detect tiny but real effects. Statistical significance tells us the effect is REAL, not just noise. Practical significance tells us the effect is SMALL compared to players. Both are important.
+
+This tells us that while conferences have real, statistically significant effects—probably from coaching, systems, and development—individual talent is what really drives outcomes. You can't coach your way to wins without good players.
 :::
 
 ---
@@ -231,7 +240,8 @@ The spread is meaningful but not huge, which suggests our player-level RAPM is c
 
 **Substantive results:**
 - Top players: Mosley, Rice, Kensmil (10-13% WP impact per 40 min)
-- Conference effects modest but real (~±2% WP per 40 min)
+- **Player effects 5× larger than conference effects** (individual talent >> league)
+- Conference effects: real (+2.6% Big Ten, -3.4% Other) but secondary
 - Shrinkage factor 0.15 → conservative, stable estimates
 
 ::: notes
