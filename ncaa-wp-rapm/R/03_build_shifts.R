@@ -171,6 +171,7 @@ pbp_with_leverage <- pbp_sorted %>%
 team_shifts <- pbp_with_leverage %>%
   group_by(game_id, half, home, away) %>%
   summarise(
+    season = first(season), # NEW: Preserve season
     start_wp = first(home_wp),
     end_wp = last(next_wp),
     wp_change = end_wp - start_wp,
@@ -187,7 +188,7 @@ team_shifts <- pbp_with_leverage %>%
     away_team = away
   ) %>%
   select(
-    stint_id, game_id, half, home_team, away_team,
+    stint_id, game_id, season, half, home_team, away_team,
     wp_change, duration, leverage,
     avg_score_diff, avg_time_remaining
   )
@@ -223,7 +224,7 @@ stint_starters <- team_shifts %>%
   rename(away_starter = player) %>%
   filter(!is.na(home_starter), !is.na(away_starter)) %>%
   # Keep one row per stint with lists of starters
-  group_by(stint_id, game_id, half, home_team, away_team, wp_change, duration, leverage) %>%
+  group_by(stint_id, game_id, season, half, home_team, away_team, wp_change, duration, leverage) %>%
   summarise(
     home_starters = list(unique(home_starter)),
     away_starters = list(unique(away_starter)),

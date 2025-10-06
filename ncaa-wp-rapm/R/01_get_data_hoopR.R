@@ -44,9 +44,11 @@ pbp_clean <- pbp %>%
     half = ifelse(period_number <= 2, period_number, 2),
     # Game outcome
     game_id = as.character(game_id),
+    home_team_id = as.character(home_team_id), # NEW: Keep team IDs
+    away_team_id = as.character(away_team_id),
     home = home_team_name,
     away = away_team_name,
-    # Keep season for fixed effects (NEW!)
+    # Keep season for fixed effects
     season = as.integer(season),
     # Keep period for better tracking
     period_number = period_number,
@@ -61,8 +63,19 @@ pbp_clean <- pbp %>%
     home_win = ifelse(last(score_diff) > 0, 1, 0)
   ) %>%
   ungroup() %>%
+  # Join conference info based on team IDs
+  left_join(team_lookup %>% select(team_id, conference),
+    by = c("home_team_id" = "team_id")
+  ) %>%
+  rename(home_conference = conference) %>%
+  left_join(team_lookup %>% select(team_id, conference),
+    by = c("away_team_id" = "team_id")
+  ) %>%
+  rename(away_conference = conference) %>%
   select(
-    game_id, season, home, away, home_score, away_score, score_diff,
+    game_id, season, home_team_id, away_team_id, home, away,
+    home_conference, away_conference,
+    home_score, away_score, score_diff,
     secs_remaining, half, period_number, play_type, play_text, home_win
   )
 
@@ -70,7 +83,8 @@ pbp_clean <- pbp %>%
 box_scores <- player_box %>%
   mutate(
     game_id = as.character(game_id),
-    season = as.integer(season), # NEW: Keep season
+    season = as.integer(season),
+    team_id = as.character(team_id), # NEW: Keep team ID
     player = athlete_display_name,
     team = team_short_display_name,
     min = as.numeric(minutes),
@@ -115,6 +129,7 @@ box_scores <- player_box %>%
 # Save (directories created by 00_setup.R)
 saveRDS(pbp_clean, "data/raw/pbp_clean.rds")
 saveRDS(box_scores, "data/interim/box_scores.rds")
+saveRDS(team_lookup, "data/interim/team_lookup.rds") # NEW: Save team/conference mapping
 
 # Summary
 message("\n===================================")

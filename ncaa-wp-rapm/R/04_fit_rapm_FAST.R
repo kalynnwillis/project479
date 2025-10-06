@@ -166,6 +166,19 @@ if ("leverage" %in% names(shifts)) {
 # Normalize weights to sum to number of observations
 weights <- weights * (nrow(shifts) / sum(weights))
 
+# TIME-DECAY: Down-weight older seasons (NCAA-specific robustness)
+# Most recent season gets full weight, older seasons decay exponentially
+current_season <- max(shifts$season, na.rm = TRUE)
+half_life <- 1.0 # Seasons; recent year = 100%, 1 year back = 50%, 2 years = 25%
+decay_lambda <- log(2) / half_life
+season_decay <- exp(-decay_lambda * (current_season - shifts$season))
+weights <- weights * season_decay
+
+message(paste("Time-decay applied: half-life =", half_life, "seasons"))
+message(paste("  Season", current_season, "weight: 1.00"))
+message(paste("  Season", current_season - 1, "weight:", round(exp(-decay_lambda * 1), 2)))
+message(paste("  Season", current_season - 2, "weight:", round(exp(-decay_lambda * 2), 2)))
+
 # Remove rows/columns with no variation and ensure finite values
 message("Filtering valid shifts and players...")
 valid_shifts <- which(rowSums(X != 0) > 0 & is.finite(y))
@@ -184,7 +197,7 @@ message(paste("Median shift weight:", round(median(weights_valid), 2)))
 # ============================================================================
 message("\n=== Creating team, conference, and season fixed effects ===")
 
-# Map teams to conferences ONCE
+# Map teams to conferences using manual mapping (hoopR doesn't provide conference data)
 team_conf_map <- data.frame(
   team = all_teams,
   conference = get_team_conference(all_teams)
@@ -682,10 +695,28 @@ write_csv(season_effects, "tables/season_effects.csv")
 # Print top players
 message("\n=== Top 20 Players (Ridge RAPM per 40 min) ===")
 message(paste("Note: Filtered to ≥", MIN_MINUTES, "minutes and ≥", MIN_GAMES, "games"))
-print(rapm_results_filtered %>%
+
+# Explicitly print top 3 first to ensure they're visible
+top_20 <- rapm_results_filtered %>%
   arrange(desc(ridge_rapm)) %>%
   select(player, ridge_per40, baseline_per40, games_played, total_minutes) %>%
-  head(20))
+  head(20)
+
+message("\nTOP 3 PLAYERS:")
+for (i in 1:min(3, nrow(top_20))) {
+  message(sprintf(
+    "%d. %-25s Ridge: %.3f | Baseline: %.3f | Games: %3d | Mins: %4d",
+    i,
+    top_20$player[i],
+    top_20$ridge_per40[i],
+    top_20$baseline_per40[i],
+    top_20$games_played[i],
+    top_20$total_minutes[i]
+  ))
+}
+
+message("\nFull Top 20:")
+print(top_20, n = 20)
 
 message("\n=== Baseline vs Ridge Comparison ===")
 baseline_sd <- sd(rapm_results_filtered$baseline_per40, na.rm = TRUE)
