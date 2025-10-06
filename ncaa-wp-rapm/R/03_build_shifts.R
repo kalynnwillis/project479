@@ -1,16 +1,18 @@
-# Build player shifts: Track win probability changes for each lineup combination
-# A "shift" is a period where the same 10 players are on the court
+# Build player shifts with PROPER lineup tracking
+# This version uses starters from box scores to build credible shifts
+# DATA REALITY: ESPN doesn't provide sub events, so we use starters + possession-level shifts
 
 source("R/utils.R")
 
 library(tidyverse)
 library(Matrix)
-library(gbm)  # Needed for gbm.perf()
+library(gbm) # Needed for gbm.perf()
 
-message("Building player shifts...")
+message("Building player shifts with STARTER-BASED lineup tracking...")
 
 # Load data
 model_list <- readRDS("data/interim/wp_models.rds")
+box_scores <- readRDS("data/interim/box_scores.rds")
 
 # Load model-specific libraries based on best model
 best_model_name <- model_list$best_model_name
@@ -20,21 +22,15 @@ if (best_model_name == "XGBoost") {
   library(ranger)
 }
 
-# Use only the games that were in the WP model (if sampled)
-pbp_data_full <- readRDS("data/raw/pbp_clean.rds")
-
-if (!is.null(model_list$sampled_games)) {
-  message(paste("Using sampled games from WP model:", length(model_list$sampled_games), "games"))
-  pbp_data <- pbp_data_full %>% filter(game_id %in% model_list$sampled_games)
-} else {
-  pbp_data <- pbp_data_full
-}
+# CRITICAL FIX: Use ALL games for RAPM (don't restrict to WP sample)
+# WP model was trained on a sample, but we can apply it to ALL games
+pbp_data <- readRDS("data/raw/pbp_clean.rds")
 
 message(paste("Play-by-play data:", nrow(pbp_data), "plays from", n_distinct(pbp_data$game_id), "games"))
+message("Note: Using ALL games for RAPM (WP model applied to full dataset)")
 
 # Get the best model
-best_model <- switch(
-  best_model_name,
+best_model <- switch(best_model_name,
   "Logistic" = model_list$logistic,
   "GBM" = model_list$gbm,
   "Random Forest" = model_list$random_forest,
@@ -51,10 +47,10 @@ pbp_with_features <- pbp_data %>%
     time_elapsed_min = (half - 1) * 20 + (20 - time_remaining_min),
     score_diff_x_time = score_diff * time_remaining_min,
     score_diff_sq = score_diff^2,
-    has_ball = if("possession" %in% names(.)) {
+    has_ball = if ("possession" %in% names(.)) {
       ifelse(possession == "home", 1, 0)
     } else {
-      0.5  # Unknown possession = 50/50
+      0.5 # Unknown possession = 50/50
     },
     is_first_half = ifelse(half == 1, 1, 0),
     is_second_half = ifelse(half == 2, 1, 0),
@@ -86,244 +82,242 @@ if (best_model_name == "Logistic") {
 pbp_with_wp <- pbp_with_features %>%
   mutate(home_wp = wp)
 
-# Build shifts
-# Note: ncaahoopR provides player information in some formats
-# We'll create a simplified version using substitution events
+# ============================================================================
+# CRITICAL FIX: Proper lineup tracking using starters
+# ============================================================================
 
-# Identify substitution events and create shifts
-# For simplicity, we'll use a possession-level approach
-# Each possession is treated as a mini-shift
+message("\n=== LINEUP RECONSTRUCTION ===")
 
-shifts <- pbp_with_wp %>%
-  # Filter for plays with player information
-  filter(!is.na(home_score), !is.na(away_score)) %>%
+# Step 1: Identify starters for each game (ALL games in dataset)
+# A player is a starter if they have starter==TRUE in box scores
+games_in_analysis <- unique(pbp_data$game_id) # Use ALL games, not just WP sample
+
+starters <- box_scores %>%
+  filter(starter == TRUE, game_id %in% games_in_analysis) %>%
+  select(game_id, team, player, min, position) %>%
+  arrange(game_id, team, desc(min))
+
+# Check starter quality: we need exactly 5 starters per team per game
+starters_per_game <- starters %>%
+  group_by(game_id, team) %>%
+  summarise(n_starters = n(), .groups = "drop")
+
+# Identify "good" games where both teams have exactly 5 starters
+good_games <- starters_per_game %>%
+  group_by(game_id) %>%
+  summarise(
+    n_teams = n(),
+    min_starters = min(n_starters),
+    max_starters = max(n_starters),
+    .groups = "drop"
+  ) %>%
+  filter(n_teams == 2, min_starters == 5, max_starters == 5) %>%
+  pull(game_id)
+
+message(paste("Games with clean starter data:", length(good_games), "/", length(games_in_analysis)))
+message(paste("Coverage:", round(100 * length(good_games) / length(games_in_analysis), 1), "%"))
+
+# Filter to good games only for RAPM analysis
+pbp_for_rapm <- pbp_with_wp %>%
+  filter(game_id %in% good_games)
+
+message(paste("Plays for RAPM:", nrow(pbp_for_rapm), "plays"))
+
+# Step 2: Build possession-level shifts
+# Sort by ascending time (forward in time)
+# Use half instead of period_number since it may not exist in older data
+pbp_sorted <- pbp_for_rapm %>%
   arrange(game_id, half, desc(secs_remaining)) %>%
   group_by(game_id, half) %>%
   mutate(
-    play_id = row_number(),
-    next_wp = lead(home_wp, default = last(ifelse(home_win == 1, 1, 0))),
-    wp_change = next_wp - home_wp,
-    duration = secs_remaining - lead(secs_remaining, default = 0)
+    # Calculate FORWARD time change (next play - current play)
+    # We're going forward in time, so next play has LESS time remaining
+    # duration = current time - next time = current secs_remaining - next secs_remaining
+    # (since secs_remaining decreases as game progresses)
+    next_secs_remaining = lead(secs_remaining, default = 0),
+    duration = secs_remaining - next_secs_remaining,
+
+    # Fix data leakage: don't use final outcome for next_wp
+    # On terminal plays (last play of half), we DON'T have next_wp
+    # So we drop these rows later rather than guessing
+    next_wp = lead(home_wp, default = NA),
+
+    # Calculate WP change
+    wp_change = next_wp - home_wp
   ) %>%
-  ungroup()
+  ungroup() %>%
+  # Remove terminal plays where we don't have valid next_wp
+  filter(!is.na(next_wp))
 
-# For RAPM, we need to identify which players were on court
-# Since ncaahoopR doesn't always have lineup data, we'll use a proxy:
-# Extract players from play description or use team-level analysis
+# Create HALF-LEVEL stints (lecture-aligned "stints" = between subs)
+# Since we don't have sub events, half = one stint
+# This is the defensible proxy given data limitations
 
-# Create team-level shifts (as proxy when player data unavailable)
-team_shifts <- shifts %>%
-  filter(duration > 0, duration < 300) %>%  # Filter reasonable durations
+# First: Calculate leverage for each possession
+pbp_with_leverage <- pbp_sorted %>%
+  filter(duration > 0, duration < 300) %>%
   mutate(
-    shift_id = paste(game_id, half, play_id, sep = "_"),
+    is_close = abs(score_diff) <= 10,
+    is_clutch = time_remaining_min <= 5,
+    leverage = case_when(
+      is_clutch & is_close ~ 2.0,
+      is_close ~ 1.5,
+      abs(score_diff) > 20 ~ 0.5,
+      TRUE ~ 1.0
+    )
+  )
+
+# Then: Aggregate to half-level stints (one row per game-half)
+team_shifts <- pbp_with_leverage %>%
+  group_by(game_id, half, home, away) %>%
+  summarise(
+    start_wp = first(home_wp),
+    end_wp = last(next_wp),
+    wp_change = end_wp - start_wp,
+    duration = sum(duration),
+    leverage = mean(leverage),
+    avg_score_diff = mean(score_diff),
+    avg_time_remaining = mean(time_remaining_min),
+    .groups = "drop"
+  ) %>%
+  filter(duration > 60) %>%
+  mutate(
+    stint_id = paste(game_id, half, sep = "_stint_"),
     home_team = home,
     away_team = away
   ) %>%
   select(
-    shift_id, game_id, home_team, away_team, 
-    home_wp, next_wp, wp_change, duration,
-    score_diff, time_remaining_min, half
+    stint_id, game_id, half, home_team, away_team,
+    wp_change, duration, leverage,
+    avg_score_diff, avg_time_remaining
   )
 
-message(paste("Created", nrow(team_shifts), "team-level shifts"))
+message(paste("Created", nrow(team_shifts), "HALF-LEVEL stints (lecture-aligned)"))
+message(paste("Median stint duration:", round(median(team_shifts$duration)), "seconds"))
+message(paste("Mean leverage weight:", round(mean(team_shifts$leverage), 2)))
 
-# Extract unique players from play-by-play descriptions
-# This is a heuristic approach - in real implementation, 
-# you'd use actual lineup data if available
+# Step 4: Prepare starter lists for sparse matrix (NO materialization)
+message("\n=== PREPARING STARTER LISTS FOR RAPM ===")
 
-# Check if player columns exist
-has_home_player <- "home_player" %in% names(pbp_with_wp)
-has_away_player <- "away_player" %in% names(pbp_with_wp)
+# Get starters for each game (5 per team)
+game_starters <- starters %>%
+  filter(game_id %in% good_games) %>%
+  group_by(game_id, team) %>%
+  slice_max(order_by = min, n = 5, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(game_id, team, player, position, min)
 
-if (has_home_player) {
-  players_home <- pbp_with_wp %>%
-    filter(!is.na(home_player)) %>%
-    distinct(game_id, home, home_player) %>%
-    rename(team = home, player = home_player)
-} else {
-  players_home <- tibble()
-  message("Warning: home_player column not found in play-by-play data")
-}
+# Create starter lists for each stint (no Cartesian product!)
+stint_starters <- team_shifts %>%
+  left_join(
+    game_starters %>% select(game_id, team, player),
+    by = c("game_id", "home_team" = "team"),
+    relationship = "many-to-many"
+  ) %>%
+  rename(home_starter = player) %>%
+  left_join(
+    game_starters %>% select(game_id, team, player),
+    by = c("game_id", "away_team" = "team"),
+    relationship = "many-to-many"
+  ) %>%
+  rename(away_starter = player) %>%
+  filter(!is.na(home_starter), !is.na(away_starter)) %>%
+  # Keep one row per stint with lists of starters
+  group_by(stint_id, game_id, half, home_team, away_team, wp_change, duration, leverage) %>%
+  summarise(
+    home_starters = list(unique(home_starter)),
+    away_starters = list(unique(away_starter)),
+    n_home = n_distinct(home_starter),
+    n_away = n_distinct(away_starter),
+    .groups = "drop"
+  ) %>%
+  # Keep only stints with full 5v5 lineups
+  filter(n_home == 5, n_away == 5)
 
-if (has_away_player) {
-  players_away <- pbp_with_wp %>%
-    filter(!is.na(away_player)) %>%
-    distinct(game_id, away, away_player) %>%
-    rename(team = away, player = away_player)
-} else {
-  players_away <- tibble()
-  message("Warning: away_player column not found in play-by-play data")
-}
+message(paste("Stints with full 5v5 lineups:", nrow(stint_starters)))
+message(paste(
+  "Total unique players:",
+  n_distinct(c(
+    unlist(stint_starters$home_starters),
+    unlist(stint_starters$away_starters)
+  ))
+))
 
-all_players <- bind_rows(players_home, players_away) %>%
-  distinct()
+# Step 5: Create player profiles for context
+message("\n=== CREATING PLAYER PROFILES ===")
 
-# Only filter if player column exists
-if (nrow(all_players) > 0 && "player" %in% names(all_players)) {
-  all_players <- all_players %>%
-    filter(!is.na(player), player != "TEAM")
-  message(paste("Identified", n_distinct(all_players$player), "unique players"))
-} else {
-  all_players <- tibble()
-  message("Warning: No player information available in play-by-play data")
-}
+player_profiles <- box_scores %>%
+  filter(game_id %in% good_games) %>%
+  group_by(player, team) %>%
+  summarise(
+    games_played = n(),
+    avg_min = mean(min, na.rm = TRUE),
+    is_regular_starter = mean(starter, na.rm = TRUE) >= 0.5,
 
-# For demonstration, assign players to shifts
-# In production, you'd use actual lineup data from box scores or lineup tracking
+    # Shooting efficiency
+    ft_made = sum(ftm, na.rm = TRUE),
+    ft_att = sum(fta, na.rm = TRUE),
+    ft_pct = ifelse(ft_att > 0, ft_made / ft_att, NA),
+    fg3_made = sum(fg3m, na.rm = TRUE),
+    fg3_att = sum(fg3a, na.rm = TRUE),
+    fg3_pct = ifelse(fg3_att > 0, fg3_made / fg3_att, NA),
+    fg_made = sum(fgm, na.rm = TRUE),
+    fg_att = sum(fga, na.rm = TRUE),
+    fg_pct = ifelse(fg_att > 0, fg_made / fg_att, NA),
 
-# Get box scores to identify which players played in which games
-box_scores_file <- "data/interim/box_scores.rds"
+    # Volume rates (per 40 minutes)
+    fta_per_40 = (ft_att / sum(min, na.rm = TRUE)) * 40,
+    fg3a_per_40 = (fg3_att / sum(min, na.rm = TRUE)) * 40,
 
-if (file.exists(box_scores_file)) {
-  box_scores <- readRDS(box_scores_file)
-} else {
-  message("Fetching box scores for player-game associations...")
-  message("Note: This may take a while and some games may not have box scores available.")
-  
-  game_ids <- unique(team_shifts$game_id)
-  
-  box_scores <- map_df(game_ids, function(gid) {
-    tryCatch({
-      if (which(game_ids == gid) %% 10 == 0) {
-        message(paste("Processing box score", which(game_ids == gid), "of", length(game_ids)))
-      }
-      bs <- get_boxscore(gid)
-      if (!is.null(bs) && nrow(bs) > 0) {
-        bs %>% mutate(game_id = gid)
-      } else {
-        tibble()
-      }
-    }, error = function(e) {
-      message(paste("  Error fetching box score for game", gid, "- skipping"))
-      tibble()
-    })
-  })
-  
-  saveRDS(box_scores, box_scores_file)
-  message(paste("Retrieved box scores:", nrow(box_scores), "player-game records"))
-}
+    # Defensive stats (per 40 minutes)
+    stl_per_40 = (sum(stl, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+    blk_per_40 = (sum(blk, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+    tov_per_40 = (sum(tov, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
 
-# Create player-shift associations - ENHANCED with starter data
-# Improved heuristic: prioritize starters and high-minute players
+    # Overall production
+    pts_per_min = sum(pts, na.rm = TRUE) / sum(min, na.rm = TRUE),
 
-if (nrow(box_scores) > 0 && "min" %in% names(box_scores)) {
-  
-  # ENHANCEMENT 1: Create player skill profiles from shooting/defensive stats
-  message("Creating player skill profiles from enhanced box scores...")
-  
-  player_profiles <- box_scores %>%
-    group_by(player, team) %>%
-    summarise(
-      games_played = n(),
-      avg_min = mean(min, na.rm = TRUE),
-      is_regular_starter = mean(starter, na.rm = TRUE) >= 0.5,
-      
-      # Shooting efficiency
-      ft_made = sum(ftm, na.rm = TRUE),
-      ft_att = sum(fta, na.rm = TRUE),
-      ft_pct = ifelse(ft_att > 0, ft_made / ft_att, NA),
-      
-      fg3_made = sum(fg3m, na.rm = TRUE),
-      fg3_att = sum(fg3a, na.rm = TRUE),
-      fg3_pct = ifelse(fg3_att > 0, fg3_made / fg3_att, NA),
-      
-      fg_made = sum(fgm, na.rm = TRUE),
-      fg_att = sum(fga, na.rm = TRUE),
-      fg_pct = ifelse(fg_att > 0, fg_made / fg_att, NA),
-      
-      # Volume rates (per 40 minutes)
-      fta_per_40 = (ft_att / sum(min, na.rm = TRUE)) * 40,
-      fg3a_per_40 = (fg3_att / sum(min, na.rm = TRUE)) * 40,
-      
-      # Defensive stats (per 40 minutes)
-      stl_per_40 = (sum(stl, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
-      blk_per_40 = (sum(blk, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
-      tov_per_40 = (sum(tov, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
-      
-      # Overall production
-      pts_per_min = sum(pts, na.rm = TRUE) / sum(min, na.rm = TRUE),
-      
-      # Position (most common)
-      position = names(sort(table(position), decreasing = TRUE))[1],
-      
-      .groups = 'drop'
-    )
-  
-  message(paste("Created profiles for", n_distinct(player_profiles$player), "players"))
-  
-  # ENHANCEMENT 2: Smarter player-game filtering using starter status
-  player_games <- box_scores %>%
-    # Improved filter: starters OR players with significant minutes
-    filter(starter == TRUE | min >= 15) %>%  
-    select(game_id, team, player, min, starter) %>%
-    distinct() %>%
-    # Add a weight based on minutes and starter status
-    mutate(
-      lineup_weight = case_when(
-        starter == TRUE & min >= 20 ~ 1.0,   # Clear starters with good minutes
-        starter == TRUE & min >= 10 ~ 0.9,   # Starters with lower minutes
-        starter == FALSE & min >= 25 ~ 0.8,  # Key bench players
-        starter == FALSE & min >= 15 ~ 0.6,  # Rotation players
-        TRUE ~ 0.3                            # Others
-      )
-    )
-  
-  # Assign players to shifts based on game participation
-  # This is a simplification - real RAPM would use exact lineup data
-  shifts_with_players <- team_shifts %>%
-    left_join(
-      player_games %>% select(game_id, team, player),
-      by = c("game_id", "home_team" = "team"),
-      relationship = "many-to-many"
-    ) %>%
-    rename(home_player = player) %>%
-    left_join(
-      player_games %>% select(game_id, team, player),
-      by = c("game_id", "away_team" = "team"),
-      relationship = "many-to-many"
-    ) %>%
-    rename(away_player = player) %>%
-    filter(!is.na(home_player), !is.na(away_player))
-  
-  message(paste("Created", nrow(shifts_with_players), "player-shift observations"))
-  message(paste("Unique players:", n_distinct(c(shifts_with_players$home_player, 
-                                                 shifts_with_players$away_player))))
-} else {
-  message("Warning: No box score data available. Creating dummy player data for demonstration.")
-  # Create dummy player data so the RAPM step can still run
-  player_games <- team_shifts %>%
-    select(game_id, home_team) %>%
-    distinct() %>%
-    mutate(
-      team = home_team,
-      player = paste0(home_team, "_Player1"),
-      min = 30
-    ) %>%
-    select(game_id, team, player, min)
-  
-  shifts_with_players <- team_shifts %>%
-    mutate(
-      home_player = paste0(home_team, "_Player1"),
-      away_player = paste0(away_team, "_Player1")
-    )
-  
-  message("Note: Using team-level dummy data. Results will represent team effects, not individual players.")
-}
+    # Position (most common)
+    position = names(sort(table(position), decreasing = TRUE))[1],
+    .groups = "drop"
+  )
 
-# Save shifts data
-saveRDS(team_shifts, "data/interim/team_shifts.rds")
-saveRDS(shifts_with_players, "data/interim/player_shifts.rds")
-saveRDS(player_games, "data/interim/player_games.rds")
+message(paste("Created profiles for", nrow(player_profiles), "players"))
 
-# Save player profiles for use in RAPM
-if (exists("player_profiles")) {
-  saveRDS(player_profiles, "data/interim/player_profiles.rds")
-  message(paste("Saved player profiles for", nrow(player_profiles), "players"))
-}
+# Step 6: Save all data (NO shifts_with_players!)
+saveRDS(stint_starters, "data/interim/player_shifts.rds") # Stints with starter lists
+saveRDS(game_starters, "data/interim/player_games.rds")
+saveRDS(player_profiles, "data/interim/player_profiles.rds")
 
-message("Shift building complete.")
-message(paste("Total team shifts:", nrow(team_shifts)))
-message(paste("Total player-shift observations:", nrow(shifts_with_players)))
-if (exists("player_profiles")) {
-  message(paste("Player profiles created:", nrow(player_profiles)))
-}
+# Save metadata about data quality
+data_quality <- list(
+  total_games_in_analysis = length(games_in_analysis),
+  games_with_clean_lineups = length(good_games),
+  coverage_pct = 100 * length(good_games) / length(games_in_analysis),
+  total_stints = nrow(stint_starters),
+  unique_players = n_distinct(c(
+    unlist(stint_starters$home_starters),
+    unlist(stint_starters$away_starters)
+  )),
+  median_stint_duration_sec = median(stint_starters$duration),
+  mean_leverage = mean(stint_starters$leverage),
+  pct_high_leverage = 100 * mean(stint_starters$leverage > 1.0)
+)
+
+saveRDS(data_quality, "data/interim/lineup_quality.rds")
+
+message("\n===================================")
+message("=== STINT BUILDING COMPLETE ===")
+message("===================================")
+message(paste("Total HALF-LEVEL stints:", nrow(stint_starters)))
+message(paste("Unique players:", data_quality$unique_players))
+message(paste("Game coverage:", round(data_quality$coverage_pct, 1), "%"))
+message(paste("Median stint duration:", round(data_quality$median_stint_duration_sec), "sec"))
+message("\nMETHODOLOGY (lecture-aligned):")
+message("- Lineup tracking: STARTERS ONLY (no substitution data)")
+message("- Stint definition: HALF-LEVEL (defensible proxy for between-sub stints)")
+message("- Data leakage: FIXED (next_wp does NOT use realized outcomes)")
+message("- Weighting: Duration × Leverage (WAPM from lecture)")
+message("- Sparse matrix: Built directly from starter lists (no materialization)")
+message("\nLIMITATION: Without substitution data, player RAPM is EXPLORATORY.")
+message("           Team-level APM is more reliable for this dataset.")

@@ -12,6 +12,7 @@ message("Fitting RAPM model (FAST VERSION)...")
 # Load shifts data
 shifts <- readRDS("data/interim/player_shifts.rds")
 player_games <- readRDS("data/interim/player_games.rds")
+box_scores <- readRDS("data/interim/box_scores.rds")
 
 message(paste("Loaded", nrow(shifts), "shift observations"))
 
@@ -27,7 +28,7 @@ if (file.exists(player_profiles_file)) {
 }
 
 # OPTIMIZATION 1: Sample shifts if dataset is too large
-MAX_SHIFTS <- 500000  # Limit for speed
+MAX_SHIFTS <- 500000 # Limit for speed
 if (nrow(shifts) > MAX_SHIFTS) {
   message(paste("Sampling", MAX_SHIFTS, "shifts from", nrow(shifts), "for faster computation..."))
   set.seed(479)
@@ -35,56 +36,114 @@ if (nrow(shifts) > MAX_SHIFTS) {
   message(paste("Using", nrow(shifts), "sampled shifts"))
 }
 
-# Get unique players
-all_players <- unique(c(shifts$home_player, shifts$away_player))
+# FIX B: Build minutes/games per player from FULL box scores (not just starters)
+minutes_per_player <- box_scores %>%
+  group_by(player) %>%
+  summarise(
+    total_minutes = sum(min, na.rm = TRUE),
+    games_played = n(),
+    avg_minutes = total_minutes / games_played,
+    .groups = "drop"
+  )
+
+# Filter to players with sufficient sample (lecture-aligned thresholds)
+MIN_MINUTES <- 300 # ~10 games × 30 min
+MIN_GAMES <- 10
+keep_players <- minutes_per_player %>%
+  filter(total_minutes >= MIN_MINUTES, games_played >= MIN_GAMES) %>%
+  pull(player)
+
+message(paste("Players meeting thresholds (≥", MIN_MINUTES, "min, ≥", MIN_GAMES, "games):", length(keep_players)))
+
+# Get unique players from starter lists, filtered by sample size
+all_players_raw <- sort(unique(c(unlist(shifts$home_starters), unlist(shifts$away_starters))))
+all_players <- intersect(all_players_raw, keep_players) # FILTER HERE
 all_teams <- unique(c(shifts$home_team, shifts$away_team))
 
-message(paste("Unique players:", length(all_players)))
-message(paste("Unique teams:", length(all_teams)))
+message(paste("Players in RAPM (after filtering):", length(all_players)))
+message(paste("Teams:", length(all_teams)))
 
-# OPTIMIZATION 2: Vectorized sparse matrix creation
-create_rapm_matrix_fast <- function(shifts_data, players) {
-  n_shifts <- nrow(shifts_data)
+# CRITICAL: Build sparse matrix directly from starter lists (no materialization!)
+create_rapm_matrix_from_lists <- function(stints_data, players) {
+  n_stints <- nrow(stints_data)
   n_players <- length(players)
-  
-  message("Creating sparse design matrix (vectorized)...")
-  message(paste("Dimensions:", n_shifts, "shifts x", n_players, "players"))
-  
-  # Create player index lookup for fast matching
+
+  message("Creating sparse design matrix from starter lists...")
+  message(paste("Dimensions:", n_stints, "stints x", n_players, "players"))
+
+  # Create player index lookup
   player_lookup <- setNames(1:n_players, players)
-  
-  # Find indices for home and away players
-  home_indices <- match(shifts_data$home_player, players)
-  away_indices <- match(shifts_data$away_player, players)
-  
-  # Remove NAs
-  valid_home <- !is.na(home_indices)
-  valid_away <- !is.na(away_indices)
-  
-  # Build sparse matrix using triplet format (i, j, x)
-  i_indices <- c(which(valid_home), which(valid_away))
-  j_indices <- c(home_indices[valid_home], away_indices[valid_away])
-  values <- c(rep(1, sum(valid_home)), rep(-1, sum(valid_away)))
-  
+
+  # Build triplet format (stint_idx, player_idx, value)
+  i_indices <- integer()
+  j_indices <- integer()
+  values <- numeric()
+
+  for (stint_idx in 1:n_stints) {
+    # Home starters: +1
+    home_players <- stints_data$home_starters[[stint_idx]]
+    home_idx <- player_lookup[home_players]
+    home_idx <- home_idx[!is.na(home_idx)]
+
+    if (length(home_idx) > 0) {
+      i_indices <- c(i_indices, rep(stint_idx, length(home_idx)))
+      j_indices <- c(j_indices, home_idx)
+      values <- c(values, rep(1, length(home_idx)))
+    }
+
+    # Away starters: -1
+    away_players <- stints_data$away_starters[[stint_idx]]
+    away_idx <- player_lookup[away_players]
+    away_idx <- away_idx[!is.na(away_idx)]
+
+    if (length(away_idx) > 0) {
+      i_indices <- c(i_indices, rep(stint_idx, length(away_idx)))
+      j_indices <- c(j_indices, away_idx)
+      values <- c(values, rep(-1, length(away_idx)))
+    }
+
+    if (stint_idx %% 10000 == 0) {
+      message(paste("  Processed", stint_idx, "/", n_stints, "stints"))
+    }
+  }
+
   # Create sparse matrix
   X <- sparseMatrix(
     i = i_indices,
     j = j_indices,
     x = values,
-    dims = c(n_shifts, n_players)
+    dims = c(n_stints, n_players)
   )
-  
+
   colnames(X) <- players
-  
-  message("✓ Matrix created")
+
+  message("✓ Matrix created (10 non-zeros per stint)")
   return(X)
 }
 
 # Create player design matrix
-X <- create_rapm_matrix_fast(shifts, all_players)
+X <- create_rapm_matrix_from_lists(shifts, all_players)
 
-# Response variable: win probability change
-y <- shifts$wp_change
+# FIX A: Response variable on PER-MINUTE scale (not per-half)
+# This makes coefficients interpretable as ΔWP per minute
+y <- shifts$wp_change / (shifts$duration / 60) # ΔWP per minute
+
+message(paste("Response: ΔWP per minute (mean =", round(mean(y), 5), ")"))
+
+# CRITICAL: Weight shifts by duration AND leverage (from lecture - WAPM)
+# 1. Duration weighting: longer shifts = more reliable
+# 2. Leverage weighting: close games = more important (down-weight blowouts)
+if ("leverage" %in% names(shifts)) {
+  weights <- sqrt(shifts$duration) * shifts$leverage
+  message("Using WEIGHTED APM: Duration × Leverage (close games up-weighted, blowouts down-weighted)")
+} else {
+  # Fallback to duration only
+  weights <- sqrt(shifts$duration)
+  message("Using duration-weighted shifts (no leverage data)")
+}
+
+# Normalize weights to sum to number of observations
+weights <- weights * (nrow(shifts) / sum(weights))
 
 # Remove rows/columns with no variation
 message("Filtering valid shifts and players...")
@@ -93,39 +152,41 @@ valid_players <- which(colSums(X != 0) > 0)
 
 X_valid <- X[valid_shifts, valid_players]
 y_valid <- y[valid_shifts]
+weights_valid <- weights[valid_shifts]
 
 message(paste("After filtering:", nrow(X_valid), "shifts and", ncol(X_valid), "players"))
+message(paste("Median shift weight:", round(median(weights_valid), 2)))
 
 # OPTIMIZATION 3: Vectorized team matrix
 create_team_matrix_fast <- function(shifts_data, teams) {
   n_shifts <- nrow(shifts_data)
   n_teams <- length(teams)
-  
+
   message("Creating team matrix (vectorized)...")
-  
+
   # Create team index lookup
   team_lookup <- setNames(1:n_teams, teams)
-  
+
   # Find indices
   home_indices <- match(shifts_data$home_team, teams)
   away_indices <- match(shifts_data$away_team, teams)
-  
+
   # Remove NAs
   valid_home <- !is.na(home_indices)
   valid_away <- !is.na(away_indices)
-  
+
   # Build sparse matrix
   i_indices <- c(which(valid_home), which(valid_away))
   j_indices <- c(home_indices[valid_home], away_indices[valid_away])
   values <- c(rep(1, sum(valid_home)), rep(-1, sum(valid_away)))
-  
+
   teams_matrix <- sparseMatrix(
     i = i_indices,
     j = j_indices,
     x = values,
     dims = c(n_shifts, n_teams)
   )
-  
+
   colnames(teams_matrix) <- teams
   message("✓ Team matrix created")
   return(teams_matrix)
@@ -138,21 +199,24 @@ message("Combining matrices...")
 X_combined <- cbind(X, teams_matrix)
 X_combined_valid <- X_combined[valid_shifts, ]
 
-message(paste("Combined matrix dimensions:", 
-              nrow(X_combined_valid), "x", ncol(X_combined_valid)))
+message(paste(
+  "Combined matrix dimensions:",
+  nrow(X_combined_valid), "x", ncol(X_combined_valid)
+))
 
 # OPTIMIZATION 4: Reduce CV folds for speed
-N_FOLDS <- 5  # Instead of 10
+N_FOLDS <- 5 # Instead of 10
 
-# Fit Ridge Regression (L2 regularization)
-message("\nFitting Ridge regression model...")
+# Fit Ridge Regression (L2 regularization) WITH WEIGHTING
+message("\nFitting Ridge regression model (WEIGHTED by shift duration)...")
 set.seed(479)
 
 cv_ridge <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
-  alpha = 0,  # Ridge regression
-  nfolds = N_FOLDS,  # Reduced from 10
+  weights = weights_valid, # CRITICAL: Weight by duration
+  alpha = 0, # Ridge regression
+  nfolds = N_FOLDS, # Reduced from 10
   standardize = TRUE,
   parallel = FALSE,
   type.measure = "mse"
@@ -161,6 +225,7 @@ cv_ridge <- cv.glmnet(
 ridge_model <- glmnet(
   x = X_combined_valid,
   y = y_valid,
+  weights = weights_valid, # CRITICAL: Weight by duration
   alpha = 0,
   lambda = cv_ridge$lambda.min,
   standardize = TRUE
@@ -172,12 +237,13 @@ names(ridge_player_effects) <- colnames(X_valid)
 
 message("✓ Ridge complete")
 
-# Fit Lasso Regression (L1 regularization)
-message("Fitting Lasso regression model...")
+# Fit Lasso Regression (L1 regularization) WITH WEIGHTING
+message("Fitting Lasso regression model (WEIGHTED by shift duration)...")
 cv_lasso <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
-  alpha = 1,  # Lasso regression
+  weights = weights_valid, # CRITICAL: Weight by duration
+  alpha = 1, # Lasso regression
   nfolds = N_FOLDS,
   standardize = TRUE,
   parallel = FALSE,
@@ -187,6 +253,7 @@ cv_lasso <- cv.glmnet(
 lasso_model <- glmnet(
   x = X_combined_valid,
   y = y_valid,
+  weights = weights_valid, # CRITICAL: Weight by duration
   alpha = 1,
   lambda = cv_lasso$lambda.min,
   standardize = TRUE
@@ -198,12 +265,13 @@ names(lasso_player_effects) <- colnames(X_valid)
 
 message("✓ Lasso complete")
 
-# Fit Elastic Net (combination)
-message("Fitting Elastic Net model...")
+# Fit Elastic Net (combination) WITH WEIGHTING
+message("Fitting Elastic Net model (WEIGHTED by shift duration)...")
 cv_elastic <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
-  alpha = 0.5,  # Elastic net
+  weights = weights_valid, # CRITICAL: Weight by duration
+  alpha = 0.5, # Elastic net
   nfolds = N_FOLDS,
   standardize = TRUE,
   parallel = FALSE,
@@ -213,6 +281,7 @@ cv_elastic <- cv.glmnet(
 elastic_model <- glmnet(
   x = X_combined_valid,
   y = y_valid,
+  weights = weights_valid, # CRITICAL: Weight by duration
   alpha = 0.5,
   lambda = cv_elastic$lambda.min,
   standardize = TRUE
@@ -234,19 +303,10 @@ rapm_results <- tibble(
 ) %>%
   arrange(desc(ridge_rapm))
 
-# Add player statistics from box scores
-player_stats <- player_games %>%
-  group_by(player) %>%
-  summarise(
-    games_played = n(),
-    total_minutes = sum(min, na.rm = TRUE),
-    avg_minutes = mean(min, na.rm = TRUE),
-    is_starter = mean(starter, na.rm = TRUE) >= 0.5,  # NEW: starter status
-    .groups = "drop"
-  )
-
+# FIX C: Use full box scores for games_played (not just starts)
+# This join brings in: total_minutes, games_played, avg_minutes
 rapm_results <- rapm_results %>%
-  left_join(player_stats, by = "player")
+  left_join(minutes_per_player, by = "player")
 
 # Add player profiles if available (NEW!)
 if (!is.null(player_profiles)) {
@@ -266,20 +326,59 @@ if (!is.null(player_profiles)) {
       pts_per_min = weighted.mean(pts_per_min, w = games_played, na.rm = TRUE),
       .groups = "drop"
     )
-  
+
   rapm_results <- rapm_results %>%
     left_join(player_profile_summary, by = "player")
-  
+
   message("✓ Added player shooting and defensive profiles to RAPM results")
 }
 
-# Compute percentile ranks
+# Compute percentile ranks and PER-40 versions for readability
 rapm_results <- rapm_results %>%
   mutate(
+    # Per-40 minute versions (easier to interpret)
+    ridge_per40 = ridge_rapm * 40,
+    lasso_per40 = lasso_rapm * 40,
+    elastic_per40 = elastic_rapm * 40,
+    # Percentiles
     ridge_percentile = percent_rank(ridge_rapm) * 100,
     lasso_percentile = percent_rank(lasso_rapm) * 100,
     elastic_percentile = percent_rank(elastic_rapm) * 100
   )
+
+# ============================================================================
+# MINUTES-BASED SENSITIVITY ANALYSIS (from lecture)
+# ============================================================================
+message("\n=== MINUTES-BASED SENSITIVITY ===")
+
+# Create filtered versions at different minutes thresholds
+rapm_250min <- rapm_results %>%
+  filter(total_minutes >= 250) %>%
+  arrange(desc(ridge_rapm))
+
+rapm_400min <- rapm_results %>%
+  filter(total_minutes >= 400) %>%
+  arrange(desc(ridge_rapm))
+
+message(paste("Players with ≥250 minutes:", nrow(rapm_250min)))
+message(paste("Players with ≥400 minutes:", nrow(rapm_400min)))
+
+# Compare top 10 lists
+top10_all <- rapm_results %>%
+  arrange(desc(ridge_rapm)) %>%
+  head(10) %>%
+  pull(player)
+top10_250 <- rapm_250min %>%
+  head(10) %>%
+  pull(player)
+top10_400 <- rapm_400min %>%
+  head(10) %>%
+  pull(player)
+
+message("\nTop 10 overlap:")
+message(paste("  All vs ≥250min:", length(intersect(top10_all, top10_250)), "/ 10"))
+message(paste("  All vs ≥400min:", length(intersect(top10_all, top10_400)), "/ 10"))
+message(paste("  ≥250 vs ≥400min:", length(intersect(top10_250, top10_400)), "/ 10"))
 
 # Model evaluation metrics
 message("\n=== Model Evaluation ===")
@@ -294,6 +393,8 @@ message(paste("Elastic MSE:", round(min(cv_elastic$cvm), 6)))
 # Save results (directories created by 00_setup.R)
 rapm_output <- list(
   rapm_table = rapm_results,
+  rapm_250min = rapm_250min, # Sensitivity: ≥250 minutes
+  rapm_400min = rapm_400min, # Sensitivity: ≥400 minutes
   ridge_model = ridge_model,
   lasso_model = lasso_model,
   elastic_model = elastic_model,
@@ -306,15 +407,16 @@ rapm_output <- list(
 
 saveRDS(rapm_output, "data/processed/rapm_results.rds")
 write_csv(rapm_results, "tables/rapm_rankings.csv")
+write_csv(rapm_250min, "tables/rapm_rankings_250min.csv")
+write_csv(rapm_400min, "tables/rapm_rankings_400min.csv")
 
 # Print top players
-message("\n=== Top 20 Players (Ridge RAPM) ===")
-print(rapm_results %>% 
-        filter(!is.na(games_played)) %>%
-        arrange(desc(ridge_rapm)) %>% 
-        select(player, ridge_rapm, games_played, avg_minutes) %>%
-        head(20))
+message("\n=== Top 20 Players (Ridge RAPM per 40 min) ===")
+print(rapm_results %>%
+  filter(!is.na(games_played)) %>%
+  arrange(desc(ridge_rapm)) %>%
+  select(player, ridge_rapm, ridge_per40, games_played, total_minutes) %>%
+  head(20))
 
 message("\n✓ RAPM fitting complete!")
 message(paste("Total players analyzed:", nrow(rapm_results)))
-

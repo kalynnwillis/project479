@@ -24,19 +24,19 @@ for (d in required_dirs) {
 
 # Required packages (excluding ncaahoopR which comes from GitHub)
 required_packages <- c(
-  "tidyverse",      
-  "glmnet",         
-  "caret",          
-  "Matrix",         
-  "gbm",            
-  "xgboost",        
-  "randomForest",   
-  "pROC",           
-  "knitr",          
-  "kableExtra",     
-  "ggplot2",        
-  "cowplot",        
-  "viridis"         
+  "tidyverse",
+  "glmnet",
+  "caret",
+  "Matrix",
+  "gbm",
+  "xgboost",
+  "randomForest",
+  "pROC",
+  "knitr",
+  "kableExtra",
+  "ggplot2",
+  "cowplot",
+  "viridis"
 )
 
 # Function to install if missing
