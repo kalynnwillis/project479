@@ -14,40 +14,27 @@ if (requireNamespace("doParallel", quietly = TRUE)) {
   n_cores <- max(1, parallel::detectCores() - 1)
   cl <- makeCluster(n_cores)
   registerDoParallel(cl)
-  message(paste("Parallel processing enabled:", n_cores, "cores"))
   USE_PARALLEL <- TRUE
 } else {
-  message("doParallel not available, using single core")
   USE_PARALLEL <- FALSE
 }
 
-message("Fitting RAPM model (FAST VERSION)...")
-
-# ============================================================================
-# DATA SCOPE: 7 seasons (2018-2024)
-# All player statistics and thresholds are CAREER TOTALS across all seasons
-# ============================================================================
-
-# Load shifts data
 shifts <- readRDS("data/interim/player_shifts.rds")
 player_games <- readRDS("data/interim/player_games.rds")
 box_scores <- readRDS("data/interim/box_scores.rds")
 
 message(paste("Loaded", nrow(shifts), "shift observations"))
 
-# Load player profiles (if available from enhanced data extraction)
+# Load player profiles
 player_profiles_file <- "data/interim/player_profiles.rds"
 if (file.exists(player_profiles_file)) {
   player_profiles <- readRDS(player_profiles_file)
-  message(paste("Loaded player profiles for", nrow(player_profiles), "players"))
-  message("Player profiles will be used to enhance RAPM estimates")
 } else {
   player_profiles <- NULL
-  message("No player profiles found - using basic RAPM")
 }
 
 # OPTIMIZATION 1: Sample shifts if dataset is too large
-MAX_SHIFTS <- 500000 # Limit for speed
+MAX_SHIFTS <- 500000
 if (nrow(shifts) > MAX_SHIFTS) {
   message(paste("Sampling", MAX_SHIFTS, "shifts from", nrow(shifts), "for faster computation..."))
   set.seed(479)
@@ -56,41 +43,32 @@ if (nrow(shifts) > MAX_SHIFTS) {
 }
 
 # FIX B: Build minutes/games per player from FULL box scores (not just starters)
-# CRITICAL: Group by player_id, not player name
 minutes_per_player <- box_scores %>%
   group_by(player_id) %>%
   summarise(
-    player = dplyr::last(player), # Most recent name for display
+    player = dplyr::last(player),
     total_minutes = sum(min, na.rm = TRUE),
     games_played = n(),
     avg_minutes = total_minutes / games_played,
     .groups = "drop"
   )
 
-# Filter to players with sufficient sample (lecture-aligned thresholds)
+
 MIN_MINUTES <- 2000 # Multi-season data: ~1-2 solid seasons (60 games × 30 min)
 MIN_GAMES <- 50 # Multi-season data: ~1-2 seasons of regular play
 keep_players <- minutes_per_player %>%
   filter(total_minutes >= MIN_MINUTES, games_played >= MIN_GAMES) %>%
-  pull(player_id) # Use player_id, not player name
+  pull(player_id)
 
-message(paste("Players meeting thresholds (≥", MIN_MINUTES, "min, ≥", MIN_GAMES, "games):", length(keep_players)))
 
-# Get unique players from starter lists (using IDs), filtered by sample size
 all_players_raw <- sort(unique(c(unlist(shifts$home_starters_id), unlist(shifts$away_starters_id))))
-all_players <- intersect(all_players_raw, keep_players) # FILTER HERE by player_id
+all_players <- intersect(all_players_raw, keep_players)
 all_teams <- unique(c(shifts$home_team, shifts$away_team))
 
-message(paste("Players in RAPM (after filtering):", length(all_players)))
-message(paste("Teams:", length(all_teams)))
-
-# CRITICAL: Build sparse matrix directly from starter lists (no materialization!)
 create_rapm_matrix_from_lists <- function(stints_data, players) {
   n_stints <- nrow(stints_data)
   n_players <- length(players)
 
-  message("Creating sparse design matrix from starter lists...")
-  message(paste("Dimensions:", n_stints, "stints x", n_players, "players"))
 
   # Create player index lookup
   player_lookup <- setNames(1:n_players, players)
@@ -101,7 +79,7 @@ create_rapm_matrix_from_lists <- function(stints_data, players) {
   values <- numeric()
 
   for (stint_idx in 1:n_stints) {
-    # Home starters: +1 (use ID lists)
+    # Home starters: +1
     home_players <- stints_data$home_starters_id[[stint_idx]]
     home_idx <- player_lookup[home_players]
     home_idx <- home_idx[!is.na(home_idx)]
@@ -112,7 +90,7 @@ create_rapm_matrix_from_lists <- function(stints_data, players) {
       values <- c(values, rep(1, length(home_idx)))
     }
 
-    # Away starters: -1 (use ID lists)
+    # Away starters: -1
     away_players <- stints_data$away_starters_id[[stint_idx]]
     away_idx <- player_lookup[away_players]
     away_idx <- away_idx[!is.na(away_idx)]
@@ -146,62 +124,41 @@ create_rapm_matrix_from_lists <- function(stints_data, players) {
 X <- create_rapm_matrix_from_lists(shifts, all_players)
 
 # FIX A: Response variable on PER-MINUTE scale with outlier guards
-# Protect against tiny durations and extreme outliers
 y <- shifts$wp_change / pmax(shifts$duration, 60) * 60 # Minimum duration = 60 sec
 y <- pmin(pmax(y, -0.02), 0.02) # Cap at ±2% WP per minute
-y <- ifelse(is.finite(y), y, 0) # Handle any inf/NaN
+y <- ifelse(is.finite(y), y, 0)
 
-message(paste("Response: ΔWP per minute (mean =", round(mean(y), 5), ", SD =", round(sd(y), 5), ")"))
 
-# CRITICAL: Weight shifts by duration AND leverage (from lecture - WAPM)
-# 1. Duration weighting: longer shifts = more reliable
-# 2. Leverage weighting: close games = more important (down-weight blowouts)
 if ("leverage" %in% names(shifts)) {
   weights <- sqrt(shifts$duration) * shifts$leverage
   message("Using WEIGHTED APM: Duration × Leverage (close games up-weighted, blowouts down-weighted)")
 } else {
-  # Fallback to duration only
   weights <- sqrt(shifts$duration)
   message("Using duration-weighted shifts (no leverage data)")
 }
 
-# Normalize weights to sum to number of observations
 weights <- weights * (nrow(shifts) / sum(weights))
 
-# TIME-DECAY: Down-weight older seasons (NCAA-specific robustness)
+#  Down-weight older seasons (NCAA-specific robustness)
 # Most recent season gets full weight, older seasons decay exponentially
 current_season <- max(shifts$season, na.rm = TRUE)
-half_life <- 1.0 # Seasons; recent year = 100%, 1 year back = 50%, 2 years = 25%
+half_life <- 1.0
 decay_lambda <- log(2) / half_life
 season_decay <- exp(-decay_lambda * (current_season - shifts$season))
 weights <- weights * season_decay
 
-message(paste("Time-decay applied: half-life =", half_life, "seasons"))
-message(paste("  Season", current_season, "weight: 1.00"))
-message(paste("  Season", current_season - 1, "weight:", round(exp(-decay_lambda * 1), 2)))
-message(paste("  Season", current_season - 2, "weight:", round(exp(-decay_lambda * 2), 2)))
 
-# CRITICAL: Re-normalize after time-decay to keep total weight stable
+# Re-normalize after time-decay to keep total weight stable
 weights <- weights * (length(weights) / sum(weights))
-message(paste("Re-normalized after decay: total weight =", round(sum(weights))))
 
-# Remove rows/columns with no variation and ensure finite values
-message("Filtering valid shifts and players...")
 valid_shifts <- which(rowSums(X != 0) > 0 & is.finite(y))
 valid_players <- which(colSums(X != 0) > 0)
 
 X_valid <- X[valid_shifts, valid_players]
 y_valid <- y[valid_shifts]
 weights_valid <- weights[valid_shifts]
-shifts_valid <- shifts[valid_shifts, ] # CRITICAL: Keep only valid shifts
+shifts_valid <- shifts[valid_shifts, ]
 
-message(paste("After filtering:", nrow(X_valid), "shifts and", ncol(X_valid), "players"))
-message(paste("Median shift weight:", round(median(weights_valid), 2)))
-
-# ============================================================================
-# TEAM, CONFERENCE & SEASON MATRICES (create ONLY for valid shifts - MUCH faster!)
-# ============================================================================
-message("\n=== Creating team, conference, and season fixed effects ===")
 
 # Map teams to conferences using manual mapping (hoopR doesn't provide conference data)
 team_conf_map <- data.frame(
@@ -209,7 +166,7 @@ team_conf_map <- data.frame(
   conference = get_team_conference(all_teams)
 )
 
-# Add conference info to VALID shifts only (not all shifts!)
+# Add conference info to VALID shifts only
 shifts_valid_conf <- shifts_valid %>%
   left_join(team_conf_map, by = c("home_team" = "team")) %>%
   rename(home_conf = conference) %>%
@@ -219,18 +176,12 @@ shifts_valid_conf <- shifts_valid %>%
 all_conferences <- sort(unique(c(shifts_valid_conf$home_conf, shifts_valid_conf$away_conf)))
 all_seasons <- sort(unique(shifts_valid$season))
 
-message(paste("Conferences:", length(all_conferences)))
-message(paste("Seasons:", paste(all_seasons, collapse = ", ")))
-
-# OPTIMIZED: Build all matrices in one pass for VALID shifts only
 n_valid <- nrow(shifts_valid_conf)
 n_teams <- length(all_teams)
 n_conf <- length(all_conferences)
 n_seasons <- length(all_seasons)
 
-message(paste("Building matrices for", n_valid, "valid shifts..."))
 
-# Team matrix (with NA guards)
 home_team_idx <- match(shifts_valid_conf$home_team, all_teams)
 away_team_idx <- match(shifts_valid_conf$away_team, all_teams)
 
@@ -245,7 +196,6 @@ teams_matrix_valid <- sparseMatrix(
 )
 colnames(teams_matrix_valid) <- all_teams
 
-# Conference matrix (with NA guards)
 home_conf_idx <- match(shifts_valid_conf$home_conf, all_conferences)
 away_conf_idx <- match(shifts_valid_conf$away_conf, all_conferences)
 
@@ -260,7 +210,6 @@ conf_matrix_valid <- sparseMatrix(
 )
 colnames(conf_matrix_valid) <- all_conferences
 
-# Season matrix (indicator for each season)
 season_idx <- match(shifts_valid$season, all_seasons)
 valid_season <- !is.na(season_idx)
 
@@ -272,32 +221,24 @@ season_matrix_valid <- sparseMatrix(
 )
 colnames(season_matrix_valid) <- paste0("Season_", all_seasons)
 
-message("✓ Team, conference, and season matrices created (no subsetting needed!)")
 
 # FAST: Combine matrices (all already same size)
-message("Combining matrices...")
 X_combined_valid <- cbind(X_valid, teams_matrix_valid, conf_matrix_valid, season_matrix_valid)
 
-message(paste(
-  "Combined matrix dimensions:",
-  nrow(X_combined_valid), "x", ncol(X_combined_valid)
-))
 
 # OPTIMIZATION: Faster CV with shorter lambda path
-N_FOLDS <- 5 # Reduced from 10
-N_LAMBDA <- 40 # Reduced from 100 (default)
-LAMBDA_MIN_RATIO <- 1e-2 # Less aggressive (default 1e-4)
+N_FOLDS <- 5
+N_LAMBDA <- 40
+LAMBDA_MIN_RATIO <- 1e-2
 
 # Fit Ridge Regression (L2 regularization) WITH WEIGHTING
-message("\nFitting Ridge regression model (WEIGHTED by shift duration)...")
-message(paste("  Matrix size:", nrow(X_combined_valid), "x", ncol(X_combined_valid)))
 t_ridge_start <- Sys.time()
 set.seed(479)
 
 cv_ridge <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
-  weights = weights_valid, # CRITICAL: Weight by duration
+  weights = weights_valid,
   alpha = 0, # Ridge regression
   nfolds = N_FOLDS,
   nlambda = N_LAMBDA,
@@ -311,7 +252,7 @@ cv_ridge <- cv.glmnet(
 ridge_model <- glmnet(
   x = X_combined_valid,
   y = y_valid,
-  weights = weights_valid, # CRITICAL: Weight by duration
+  weights = weights_valid,
   alpha = 0,
   lambda = cv_ridge$lambda.1se,
   standardize = TRUE
@@ -321,7 +262,7 @@ ridge_coefs <- coef(ridge_model)
 ridge_player_effects <- ridge_coefs[2:(length(valid_players) + 1)]
 names(ridge_player_effects) <- colnames(X_valid)
 
-# Also extract team, conference, and season effects
+
 n_players <- length(valid_players)
 n_teams <- ncol(teams_matrix_valid)
 n_conferences <- length(all_conferences)
@@ -331,14 +272,13 @@ ridge_team_effects <- ridge_coefs[(n_players + 2):(n_players + n_teams + 1)]
 ridge_conf_effects <- ridge_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
 ridge_season_effects <- ridge_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
 
-message(paste("✓ Ridge complete in", round(difftime(Sys.time(), t_ridge_start, units = "mins"), 1), "minutes"))
 
 # Fit Lasso Regression (L1 regularization) WITH WEIGHTING
 message("Fitting Lasso regression model (WEIGHTED by shift duration)...")
 cv_lasso <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
-  weights = weights_valid, # CRITICAL: Weight by duration
+  weights = weights_valid,
   alpha = 1, # Lasso regression
   nfolds = N_FOLDS,
   nlambda = N_LAMBDA,
@@ -351,7 +291,7 @@ cv_lasso <- cv.glmnet(
 lasso_model <- glmnet(
   x = X_combined_valid,
   y = y_valid,
-  weights = weights_valid, # CRITICAL: Weight by duration
+  weights = weights_valid,
   alpha = 1,
   lambda = cv_lasso$lambda.1se,
   standardize = TRUE
@@ -361,19 +301,17 @@ lasso_coefs <- coef(lasso_model)
 lasso_player_effects <- lasso_coefs[2:(length(valid_players) + 1)]
 names(lasso_player_effects) <- colnames(X_valid)
 
-# Extract team, conference, and season effects
+
 lasso_team_effects <- lasso_coefs[(n_players + 2):(n_players + n_teams + 1)]
 lasso_conf_effects <- lasso_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
 lasso_season_effects <- lasso_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
 
-message("✓ Lasso complete")
 
 # Fit Elastic Net (combination) WITH WEIGHTING
-message("Fitting Elastic Net model (WEIGHTED by shift duration)...")
 cv_elastic <- cv.glmnet(
   x = X_combined_valid,
   y = y_valid,
-  weights = weights_valid, # CRITICAL: Weight by duration
+  weights = weights_valid,
   alpha = 0.5, # Elastic net
   nfolds = N_FOLDS,
   nlambda = N_LAMBDA,
@@ -386,7 +324,7 @@ cv_elastic <- cv.glmnet(
 elastic_model <- glmnet(
   x = X_combined_valid,
   y = y_valid,
-  weights = weights_valid, # CRITICAL: Weight by duration
+  weights = weights_valid,
   alpha = 0.5,
   lambda = cv_elastic$lambda.1se,
   standardize = TRUE
@@ -401,12 +339,6 @@ elastic_team_effects <- elastic_coefs[(n_players + 2):(n_players + n_teams + 1)]
 elastic_conf_effects <- elastic_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
 elastic_season_effects <- elastic_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
 
-message("✓ Elastic Net complete")
-
-# ============================================================================
-# BASELINE APM (Weighted OLS - no regularization) as cross-check
-# ============================================================================
-message("\n=== Fitting Baseline APM (Weighted OLS) ===")
 
 # Fit unregularized model with very large lambda (effectively no penalty)
 baseline_model <- glmnet(
@@ -414,7 +346,7 @@ baseline_model <- glmnet(
   y = y_valid,
   weights = weights_valid,
   alpha = 0,
-  lambda = 1e-10, # Nearly zero penalty
+  lambda = 1e-10,
   standardize = TRUE
 )
 
@@ -422,33 +354,14 @@ baseline_coefs <- coef(baseline_model)
 baseline_player_effects <- baseline_coefs[2:(length(valid_players) + 1)]
 names(baseline_player_effects) <- colnames(X_valid)
 
-message(paste(
-  "  Baseline APM range:",
-  round(min(baseline_player_effects), 6), "to",
-  round(max(baseline_player_effects), 6)
-))
-message(paste(
-  "  Ridge range:",
-  round(min(ridge_player_effects), 6), "to",
-  round(max(ridge_player_effects), 6)
-))
-message("  → Regularization is shrinking estimates as expected")
 
-# ============================================================================
-# GAME-WISE OUT-OF-SAMPLE MSE (robustness check)
-# ============================================================================
-message("\n=== Computing game-wise OOS MSE ===")
-
-# Get unique games from valid shifts
 shifts_valid$game_id <- shifts[valid_shifts, ]$game_id
 unique_games <- unique(shifts_valid$game_id)
 n_games <- length(unique_games)
 
-message(paste("Evaluating on", n_games, "games..."))
 
-# Hold out each game and predict
 set.seed(479)
-n_oos_games <- min(50, n_games) # Sample games for speed
+n_oos_games <- min(50, n_games)
 oos_games <- sample(unique_games, n_oos_games)
 oos_mse_ridge <- numeric(n_oos_games)
 oos_mse_baseline <- numeric(n_oos_games)
@@ -485,25 +398,17 @@ for (i in seq_along(oos_games)) {
 }
 
 valid_oos <- oos_mse_ridge > 0
-message(paste("  Ridge OOS MSE:", round(mean(oos_mse_ridge[valid_oos]), 6)))
-message(paste("  Baseline OOS MSE:", round(mean(oos_mse_baseline[valid_oos]), 6)))
-message(paste(
-  "  Improvement:",
-  round(100 * (1 - mean(oos_mse_ridge[valid_oos]) / mean(oos_mse_baseline[valid_oos])), 1), "%"
-))
 
 # Compile RAPM results
-message("\nCompiling results...")
 rapm_results <- tibble(
-  player_id = colnames(X_valid), # Store player_id as the key
-  baseline_apm = as.numeric(baseline_player_effects), # NEW: Unregularized
+  player_id = colnames(X_valid),
+  baseline_apm = as.numeric(baseline_player_effects),
   ridge_rapm = as.numeric(ridge_player_effects),
   lasso_rapm = as.numeric(lasso_player_effects),
   elastic_rapm = as.numeric(elastic_player_effects)
 ) %>%
   arrange(desc(ridge_rapm))
 
-# Compile conference effects
 conference_effects <- tibble(
   conference = all_conferences,
   ridge_conf = as.numeric(ridge_conf_effects),
@@ -517,7 +422,6 @@ conference_effects <- tibble(
   ) %>%
   arrange(desc(ridge_conf))
 
-message("\n=== Conference Effects (Ridge per 40 min) ===")
 print(conference_effects %>% select(conference, ridge_conf_per40))
 
 # Compile season effects
@@ -533,7 +437,6 @@ season_effects <- tibble(
     elastic_season_per40 = elastic_season * 40
   )
 
-message("\n=== Season Effects (Ridge per 40 min) ===")
 print(season_effects %>% select(season, ridge_season_per40))
 
 # FIX C: Use full box scores for games_played (not just starts)
@@ -562,14 +465,12 @@ if (!is.null(player_profiles)) {
 
   rapm_results <- rapm_results %>%
     left_join(player_profile_summary, by = "player_id")
-
-  message("✓ Added player shooting and defensive profiles to RAPM results")
 }
 
 # Compute percentile ranks and PER-40 versions for readability
 rapm_results <- rapm_results %>%
   mutate(
-    # Per-40 minute versions (easier to interpret)
+    # Per-40 minute versions
     baseline_per40 = baseline_apm * 40,
     ridge_per40 = ridge_rapm * 40,
     lasso_per40 = lasso_rapm * 40,
@@ -580,25 +481,16 @@ rapm_results <- rapm_results %>%
     elastic_percentile = percent_rank(elastic_rapm) * 100
   )
 
-# ============================================================================
-# SANITY CHECKS (lecture-aligned validation)
-# ============================================================================
-message("\n=== RAPM Sanity Checks ===")
-
 # Check 1: Mean should be near 0 after centering
 rapm_mean <- mean(rapm_results$ridge_rapm, na.rm = TRUE)
 rapm_sd <- sd(rapm_results$ridge_rapm, na.rm = TRUE)
 message(paste("Ridge RAPM mean:", round(rapm_mean, 6), "(should be ≈0)"))
 message(paste("Ridge RAPM SD:", round(rapm_sd, 6)))
 
-# Check 2: Correlation with minutes (should be near 0 after shrinkage)
+# Check 2: Correlation with minutes
 minutes_cor <- cor(rapm_results$ridge_rapm, rapm_results$total_minutes,
   use = "complete.obs"
 )
-message(paste(
-  "Correlation(RAPM, minutes):", round(minutes_cor, 3),
-  "(should be ≈0 with good shrinkage)"
-))
 
 if (abs(minutes_cor) > 0.3) {
   message("  ⚠ Warning: High correlation with minutes may indicate under-regularization")
@@ -606,12 +498,8 @@ if (abs(minutes_cor) > 0.3) {
   message("  ✓ Good: RAPM not biased toward high-minute players")
 }
 
-# ============================================================================
-# MINUTES-BASED SENSITIVITY ANALYSIS (from lecture)
-# ============================================================================
-message("\n=== MINUTES-BASED SENSITIVITY ===")
 
-# Create filtered versions at different minutes thresholds (sensitivity analysis)
+# Create filtered versions at different minutes thresholds
 rapm_1500min <- rapm_results %>%
   filter(total_minutes >= 1500) %>%
   arrange(desc(ridge_rapm))
@@ -619,9 +507,6 @@ rapm_1500min <- rapm_results %>%
 rapm_2500min <- rapm_results %>%
   filter(total_minutes >= 2500) %>%
   arrange(desc(ridge_rapm))
-
-message(paste("Players with ≥1500 minutes:", nrow(rapm_1500min)))
-message(paste("Players with ≥2500 minutes:", nrow(rapm_2500min)))
 
 # Compare top 10 lists
 top10_all <- rapm_results %>%
@@ -635,45 +520,30 @@ top10_2500 <- rapm_2500min %>%
   head(10) %>%
   pull(player)
 
-message("\nTop 10 overlap:")
-message(paste("  All vs ≥1500min:", length(intersect(top10_all, top10_1500)), "/ 10"))
-message(paste("  All vs ≥2500min:", length(intersect(top10_all, top10_2500)), "/ 10"))
-message(paste("  ≥1500 vs ≥2500min:", length(intersect(top10_1500, top10_2500)), "/ 10"))
 
 # Model evaluation metrics
-# CLEANUP: Stop parallel cluster
 if (USE_PARALLEL) {
   stopCluster(cl)
   message("Parallel cluster stopped")
 }
 
-message("\n=== Model Evaluation ===")
-message(paste("Ridge lambda (1se):", round(cv_ridge$lambda.1se, 6)))
-message(paste("Lasso lambda (1se):", round(cv_lasso$lambda.1se, 6)))
-message(paste("Elastic lambda (1se):", round(cv_elastic$lambda.1se, 6)))
-
-message(paste("\nRidge MSE:", round(min(cv_ridge$cvm), 6)))
-message(paste("Lasso MSE:", round(min(cv_lasso$cvm), 6)))
-message(paste("Elastic MSE:", round(min(cv_elastic$cvm), 6)))
 
 # Apply final consistency filter (match the pre-matrix threshold)
 rapm_results_filtered <- rapm_results %>%
   filter(total_minutes >= MIN_MINUTES, games_played >= MIN_GAMES)
 
-message(paste("Players after final filter:", nrow(rapm_results_filtered), "/", nrow(rapm_results)))
-
 # Save results (directories created by 00_setup.R)
 rapm_output <- list(
-  rapm_table = rapm_results_filtered, # Filtered version for primary analysis
-  rapm_table_all = rapm_results, # Unfiltered for diagnostics
-  rapm_1500min = rapm_1500min, # Sensitivity: ≥1500 minutes
-  rapm_2500min = rapm_2500min, # Sensitivity: ≥2500 minutes
-  conference_effects = conference_effects, # Conference fixed effects
-  season_effects = season_effects, # NEW: Season fixed effects
+  rapm_table = rapm_results_filtered,
+  rapm_table_all = rapm_results,
+  rapm_1500min = rapm_1500min,
+  rapm_2500min = rapm_2500min,
+  conference_effects = conference_effects,
+  season_effects = season_effects,
   ridge_model = ridge_model,
   lasso_model = lasso_model,
   elastic_model = elastic_model,
-  baseline_model = baseline_model, # NEW: Unregularized baseline
+  baseline_model = baseline_model,
   cv_ridge = cv_ridge,
   cv_lasso = cv_lasso,
   cv_elastic = cv_elastic,
@@ -684,7 +554,7 @@ rapm_output <- list(
     rapm_sd = rapm_sd,
     minutes_cor = minutes_cor
   ),
-  oos_validation = list( # NEW: Out-of-sample validation
+  oos_validation = list(
     ridge_mse = mean(oos_mse_ridge[valid_oos]),
     baseline_mse = mean(oos_mse_baseline[valid_oos]),
     n_games = sum(valid_oos)
@@ -702,7 +572,6 @@ write_csv(season_effects, "tables/season_effects.csv")
 message("\n=== Top 20 Players (Ridge RAPM per 40 min) ===")
 message(paste("Note: Filtered to ≥", MIN_MINUTES, "minutes and ≥", MIN_GAMES, "games"))
 
-# Explicitly print top 3 first to ensure they're visible
 top_20 <- rapm_results_filtered %>%
   arrange(desc(ridge_rapm)) %>%
   select(player, ridge_per40, baseline_per40, games_played, total_minutes) %>%

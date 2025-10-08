@@ -1,12 +1,10 @@
 # Build win probability models - RANDOM FOREST OPTIMIZED VERSION
-# Multiple strategies to handle large datasets without memory errors
-
 source("R/utils.R")
 
 library(tidyverse)
 library(caret)
 library(gbm)
-library(ranger) # Memory-efficient alternative to randomForest
+library(ranger)
 library(xgboost)
 library(pROC)
 
@@ -14,11 +12,10 @@ message("Building win probability models with OPTIMIZED Random Forest...")
 
 # Load cleaned play-by-play data
 pbp_data <- readRDS("data/raw/pbp_clean.rds")
-message(paste("Total data:", nrow(pbp_data), "plays"))
 
 # STRATEGY 1: Smart sampling (maintain game structure)
 set.seed(479)
-SAMPLE_SIZE <- 150000 # Larger sample than FAST version
+SAMPLE_SIZE <- 150000
 
 if (nrow(pbp_data) > SAMPLE_SIZE) {
   message(paste("Sampling", SAMPLE_SIZE, "plays for training..."))
@@ -54,7 +51,6 @@ wp_features <- pbp_data %>%
     is_second_half, is_clutch
   )
 
-message(paste("Prepared", nrow(wp_features), "observations for modeling"))
 
 # Split data
 set.seed(479)
@@ -65,7 +61,6 @@ train_games <- sample(unique(wp_features$game_id),
 train_data <- wp_features %>% filter(game_id %in% train_games)
 test_data <- wp_features %>% filter(!game_id %in% train_games)
 
-message(paste("Training:", nrow(train_data), "| Testing:", nrow(test_data)))
 
 predictors <- c(
   "score_diff", "time_remaining_min", "time_elapsed_min",
@@ -73,8 +68,7 @@ predictors <- c(
   "is_first_half", "is_second_half", "is_clutch"
 )
 
-# Model 1: Logistic Regression (baseline)
-message("Training Model 1: Logistic Regression...")
+# Model 1: Logistic Regression
 model_logit <- glm(
   home_win ~ score_diff + time_remaining_min + score_diff_x_time +
     score_diff_sq + has_ball + is_first_half + is_clutch,
@@ -85,8 +79,7 @@ model_logit <- glm(
 pred_logit_train <- predict(model_logit, train_data, type = "response")
 pred_logit_test <- predict(model_logit, test_data, type = "response")
 
-# Model 2: GBM (lighter weight)
-message("Training Model 2: GBM...")
+# Model 2: GBM
 model_gbm <- gbm(
   home_win ~ .,
   data = train_data %>% select(home_win, all_of(predictors)) %>%
@@ -103,8 +96,7 @@ best_iter <- gbm.perf(model_gbm, method = "cv", plot.it = FALSE)
 pred_gbm_train <- predict(model_gbm, train_data, n.trees = best_iter, type = "response")
 pred_gbm_test <- predict(model_gbm, test_data, n.trees = best_iter, type = "response")
 
-# STRATEGY 3A: Use ranger (memory-efficient Random Forest)
-message("Training Model 3: Random Forest (ranger - memory optimized)...")
+
 
 # Prepare data for ranger
 train_rf <- train_data %>%
@@ -117,25 +109,24 @@ test_rf <- test_data %>%
 model_rf <- ranger(
   home_win ~ .,
   data = train_rf,
-  num.trees = 300, # Reduced from typical 500
-  max.depth = 10, # Limit tree depth
-  min.node.size = 100, # Larger minimum node size
+  num.trees = 300,
+  max.depth = 10,
+  min.node.size = 100,
   mtry = 3, # Number of variables to try at each split
-  probability = TRUE, # For probability predictions
-  num.threads = 1, # Single thread to control memory
+  probability = TRUE,
+  num.threads = 1,
   verbose = TRUE,
-  write.forest = TRUE, # Keep the forest for predictions
-  replace = TRUE, # Bootstrap sampling
-  sample.fraction = 0.7 # Use 70% of data per tree (saves memory)
+  write.forest = TRUE,
+  replace = TRUE,
+  sample.fraction = 0.7
 )
 
 pred_rf_train <- predict(model_rf, train_rf)$predictions[, 2]
 pred_rf_test <- predict(model_rf, test_rf)$predictions[, 2]
 
-message("✓ Random Forest complete!")
 
-# Model 4: XGBoost (memory efficient with sparse matrices)
-message("Training Model 4: XGBoost...")
+
+# Model 4: XGBoost
 
 train_matrix <- xgb.DMatrix(
   data = as.matrix(train_data %>% select(all_of(predictors))),
@@ -151,13 +142,13 @@ model_xgb <- xgb.train(
   params = list(
     objective = "binary:logistic",
     eval_metric = "auc",
-    max_depth = 4, # Reduced depth
-    eta = 0.1, # Learning rate
-    subsample = 0.7, # Use 70% of data per tree
-    colsample_bytree = 0.7 # Use 70% of features per tree
+    max_depth = 4,
+    eta = 0.1,
+    subsample = 0.7,
+    colsample_bytree = 0.7
   ),
   data = train_matrix,
-  nrounds = 200, # Reduced rounds
+  nrounds = 200,
   verbose = 0,
   early_stopping_rounds = 20,
   watchlist = list(test = test_matrix)
@@ -166,7 +157,7 @@ model_xgb <- xgb.train(
 pred_xgb_train <- predict(model_xgb, train_matrix)
 pred_xgb_test <- predict(model_xgb, test_matrix)
 
-# Evaluation (uses utility functions from utils.R)
+# Evaluation
 evaluate_model <- function(pred_probs, actual, model_name, dataset) {
   actual_numeric <- as.numeric(actual) - 1
   roc_obj <- roc(actual_numeric, pred_probs, quiet = TRUE)
@@ -174,10 +165,8 @@ evaluate_model <- function(pred_probs, actual, model_name, dataset) {
   brier <- brier_score(pred_probs, actual_numeric)
   ll <- log_loss(pred_probs, actual_numeric)
 
-  # CRITICAL: PROPER calibration metrics using logit of predictions
   # Perfect calibration: intercept ≈ 0, slope ≈ 1
   calib_data <- data.frame(pred = pred_probs, actual = actual_numeric)
-  # Avoid boundary issues: clip predictions slightly away from 0/1
   calib_data$pred <- pmax(pmin(calib_data$pred, 0.9999), 0.0001)
   calib_model <- glm(actual ~ qlogis(pred), data = calib_data, family = binomial())
   calib_intercept <- coef(calib_model)[1]
@@ -207,45 +196,19 @@ results <- bind_rows(
 
 print(results)
 
-# ============================================================================
-# SELECT BEST MODEL BY CALIBRATION + BRIER (not just AUC) - from lecture
-# ============================================================================
-# Perfect calibration: intercept ≈ 0, slope ≈ 1
-# Key insight: We use probabilities for ΔWP, so calibration > AUC
 
 test_results <- results %>%
   filter(Dataset == "Test") %>%
   mutate(
-    # Calibration quality: how far from perfect (0, 1)?
     calib_error = abs(Calib_Intercept) + abs(Calib_Slope - 1),
-    # Check if well-calibrated (within reasonable bounds)
     is_well_calibrated = (abs(Calib_Intercept) < 0.5 & abs(Calib_Slope - 1) < 0.3)
   )
-
-message("\n=== Model Selection (Prioritizing Calibration + Brier) ===")
-message("Perfect calibration: Intercept ≈ 0, Slope ≈ 1")
-message("Key: We use probabilities for ΔWP → calibration matters MORE than AUC\n")
 print(test_results %>% select(Model, AUC, Brier_Score, Calib_Intercept, Calib_Slope, is_well_calibrated))
 
-# Decision rule (from prof feedback):
-# 1. If XGBoost is well-calibrated AND has best Brier → pick it
-# 2. Otherwise, pick best calibrated model by Brier score
 best_model_name <- test_results %>%
-  arrange(Brier_Score, calib_error) %>% # Best Brier, then best calibration
+  arrange(Brier_Score, calib_error) %>%
   dplyr::slice(1) %>%
   pull(Model)
-
-message(paste("\n✓ Selected model:", best_model_name))
-message(paste(
-  "  Reason: Best Brier Score (",
-  round(test_results %>% filter(Model == best_model_name) %>% pull(Brier_Score), 4),
-  ") with good calibration"
-))
-
-# ============================================================================
-# CRITICAL: CALIBRATION ANALYSIS
-# ============================================================================
-message("\n=== CALIBRATION ANALYSIS ===")
 
 # Create calibration data for all models on test set
 calibration_data <- tibble(
@@ -289,9 +252,6 @@ calibration_curves <- list(
   XGBoost = compute_calibration_bins(calibration_data$XGBoost, calibration_data$actual)
 )
 
-# Print calibration summary
-message("Calibration metrics (Test set):")
-message("Perfect calibration: Intercept = 0, Slope = 1")
 print(results %>%
   filter(Dataset == "Test") %>%
   select(Model, Calib_Intercept, Calib_Slope, AUC, Brier_Score))

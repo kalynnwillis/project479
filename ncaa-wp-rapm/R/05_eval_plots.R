@@ -8,9 +8,6 @@ library(viridis)
 library(cowplot)
 library(pROC)
 
-message("Generating evaluation plots...")
-
-# Load results
 rapm_results <- readRDS("data/processed/rapm_results.rds")
 wp_models <- readRDS("data/interim/wp_models.rds")
 
@@ -18,10 +15,6 @@ wp_models <- readRDS("data/interim/wp_models.rds")
 rapm_table <- rapm_results$rapm_table
 conference_effects <- rapm_results$conference_effects
 
-# ============================================================================
-# WP MODEL CALIBRATION PLOTS (CRITICAL!)
-# ============================================================================
-message("\n=== Creating WP Model Calibration Plots ===")
 
 if (!is.null(wp_models$calibration_curves)) {
   # Create calibration plot for all models
@@ -82,11 +75,6 @@ if (!is.null(wp_models$calibration_curves)) {
   message("Warning: No calibration data found in wp_models")
 }
 
-# ============================================================================
-# CONFERENCE EFFECTS PLOT (NEW!)
-# ============================================================================
-message("\n=== Creating Conference Effects Plot ===")
-
 if (!is.null(conference_effects) && nrow(conference_effects) > 0) {
   p_conf <- ggplot(conference_effects, aes(x = reorder(conference, ridge_conf_per40), y = ridge_conf_per40)) +
     geom_col(aes(fill = ridge_conf_per40 > 0), show.legend = FALSE) +
@@ -114,8 +102,7 @@ if (!is.null(conference_effects) && nrow(conference_effects) > 0) {
 }
 
 # Plot 1: Top 30 Players by RAPM
-# Filter: only players with sufficient data in our RAPM analysis
-# Note: player_id is the key, player is the display name
+
 top_players <- rapm_table %>%
   filter(!is.na(games_played), games_played >= 5, !is.na(ridge_rapm), !is.na(player)) %>%
   arrange(desc(ridge_rapm)) %>%
@@ -200,7 +187,7 @@ if (nrow(rapm_for_minutes) == 0) {
   message("Saved: figs/rapm_vs_minutes.png")
 }
 
-# NEW PLOT: RAPM vs Shooting Efficiency (uses enhanced data!)
+#  RAPM vs Shooting Efficiency
 if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
   message("Creating shooting efficiency plots with enhanced data...")
 
@@ -226,7 +213,7 @@ if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
   message("Saved: figs/rapm_vs_shooting.png")
 }
 
-# NEW PLOT: RAPM by Position (uses enhanced data!)
+# NEW PLOT: RAPM by Position
 if ("position" %in% names(rapm_table)) {
   message("Creating position analysis plots...")
 
@@ -250,7 +237,7 @@ if ("position" %in% names(rapm_table)) {
   message("Saved: figs/rapm_by_position.png")
 }
 
-# NEW PLOT: Starters vs Bench (uses enhanced data!)
+# NEW PLOT: Starters vs Bench
 if ("is_starter" %in% names(rapm_table)) {
   message("Creating starter vs bench comparison...")
 
@@ -276,7 +263,7 @@ if ("is_starter" %in% names(rapm_table)) {
   message("Saved: figs/rapm_starters_vs_bench.png")
 }
 
-# NEW PLOT: Elite Shooters with High RAPM
+# Elite Shooters with High RAPM
 if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
   message("Creating elite shooters visualization...")
 
@@ -284,10 +271,10 @@ if ("ft_pct" %in% names(rapm_table) && "fg3_pct" %in% names(rapm_table)) {
   # Elite criteria: strong shooting efficiency (FT% and 3P%) + enough games for reliability
   elite_shooters <- rapm_table %>%
     filter(
-      games_played >= 10, # At least 10 games in our analysis (down from 20)
+      games_played >= 10,
       !is.na(ft_pct), !is.na(fg3_pct),
-      ft_pct > 0.75, # Slightly lower threshold (75% FT)
-      fg3_pct > 0.35 # Keep 35% 3PT
+      ft_pct > 0.75,
+      fg3_pct > 0.35
     ) %>%
     arrange(desc(ridge_rapm)) %>%
     head(20)
@@ -379,7 +366,6 @@ tryCatch(
 )
 
 # Plot 6: Win Probability Model Performance
-# Load test predictions and compare to actual outcomes
 if (!is.null(wp_models$evaluation_results)) {
   p6 <- ggplot(
     wp_models$evaluation_results,
@@ -476,6 +462,3 @@ combined_plot <- plot_grid(
 
 ggsave("figs/combined_analysis.png", combined_plot, width = 14, height = 10, dpi = 300)
 message("Saved: figs/combined_analysis.png")
-
-message("\nEvaluation complete. All plots and tables saved.")
-message("Check the 'figs/' and 'tables/' directories for outputs.")
