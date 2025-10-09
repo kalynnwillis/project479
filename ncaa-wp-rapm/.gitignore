@@ -30,6 +30,19 @@ figs/*.jpg
 tables/*.csv
 tables/*.xlsx
 
+# V2 analysis outputs (7-player rotation)
+new_data/raw/*.rds
+new_data/raw/*.csv
+new_data/interim/*.rds
+new_data/interim/*.csv
+new_data/processed/*.rds
+new_data/processed/*.csv
+new_figs/*.png
+new_figs/*.pdf
+new_figs/*.jpg
+new_tables/*.csv
+new_tables/*.xlsx
+
 # Quarto outputs
 *.html
 *_files/

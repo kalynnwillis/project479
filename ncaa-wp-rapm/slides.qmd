@@ -36,7 +36,7 @@ best_model <- wp_models$best_model_name
 best_calib_slope <- wp_eval %>% 
   filter(Model == best_model, Dataset == "Test") %>% 
   pull(Calib_Slope)
-shrinkage_factor <- 0.149  # From logged output
+shrinkage_factor <- 0.199  # From logged output
 ```
 
 # Background
@@ -244,25 +244,21 @@ This model forms the foundation for everything that follows. Every play in every
 
 ## Win Probability Model Performance {.smaller}
 
-::: {layout-ncol=2}
-![](figs/wp_model_performance.png){fig-alt="AUC comparison across models" width="100%"}
-
-![](figs/wp_calibration.png){fig-alt="Calibration curves for all models" width="100%"}
-:::
+![](figs/wp_calibration.png){fig-alt="Calibration curves for all models" width="80%"}
 
 ::: {.fragment}
-- **Left:** All models achieve similar AUC (~0.86), minimal overfitting  
-- **Right:** Logistic (purple) tracks diagonal = well-calibrated; XGBoost (yellow) overconfident  
+- Logistic (purple) tracks diagonal = well-calibrated; XGBoost (yellow) overconfident  
+- All models achieve similar AUC (~0.86), but calibration determines model selection  
 :::
 
 ::: notes
-These plots show why we chose logistic regression visually.
+This calibration plot shows why we chose logistic regression.
 
-The left panel compares AUC across all four models on training and test data. You can see they're all similar—around 0.85 to 0.86. There's minimal overfitting because the test bars are almost as high as the training bars. From a discrimination perspective, all models are comparable.
+The diagonal line represents perfect calibration—predicted probabilities match observed frequencies. Logistic regression, in purple, tracks that diagonal beautifully. XGBoost in yellow systematically deviates, especially at extreme probabilities.
 
-The right panel is the calibration plot. The diagonal line represents perfect calibration—predicted probabilities match observed frequencies. Logistic regression, in purple, tracks that diagonal beautifully. XGBoost in yellow systematically deviates, especially at extreme probabilities.
+All four models achieve similar AUC scores around 0.85 to 0.86, meaning they rank outcomes about equally well. But calibration is what matters for our application. We're computing win probability changes, so we need accurate probabilities, not just good rankings.
 
-This is why calibration matters more than AUC for our application. We're computing win probability changes, so we need accurate probabilities, not just good rankings.
+This is why we selected the simpler logistic model over more complex alternatives.
 :::
 
 ---
@@ -318,7 +314,7 @@ This weighting is crucial. We want our estimates to reflect what matters: compet
 - 10,000+ players, only 38,000 stints → severe overfitting risk  
 - Shrinkage penalty pulls estimates toward zero  
 - Players with limited data → conservative estimates  
-- **Result:** Shrinkage factor = 0.15 (strong regularization)  
+- **Result:** Shrinkage factor = 0.20 (strong regularization)  
 :::
 
 ::: notes
@@ -332,7 +328,7 @@ This is a huge matrix—10,000 players across 38,000 stints—and most entries a
 
 Now here's the critical part: with 10,000 players and only 38,000 stints, we have severe overfitting risk. A player who happened to be on court for a few lucky stints could look like a superstar. That's where regularization comes in.
 
-Ridge regression applies a shrinkage penalty that pulls all coefficients toward zero. Players with strong, consistent evidence of impact keep high estimates. Players with limited or noisy data get conservative estimates close to zero. Our final shrinkage factor is 0.15, meaning our estimates vary 15% as much as an unregularized model would produce. That's strong regularization, but it's necessary given the data noise.
+Ridge regression applies a shrinkage penalty that pulls all coefficients toward zero. Players with strong, consistent evidence of impact keep high estimates. Players with limited or noisy data get conservative estimates close to zero. Our final shrinkage factor is 0.20, meaning our estimates vary 20% as much as an unregularized model would produce. That's strong regularization, but it's necessary given the data noise.
 :::
 
 # Main Results
@@ -349,21 +345,21 @@ rapm_main %>%
 ```
 
 ::: {.fragment}
-**Interpretation:** Isiaih Mosley's 0.131 = **+13 percentage points of win probability**  
-- In a tied game, his team starts with ~56.5% chance (instead of 50%)  
-- That's 2 extra wins per 30-game season  
+**Interpretation:** Isiaih Mosley's 0.166 = **+16.6 percentage points of win probability**  
+- In a tied game, his team starts with ~66.6% chance (instead of 50%)  
+- That's 5 extra wins per 30-game season  
 :::
 
 ::: notes
 Here are our top players. We're showing their Ridge RAPM per 40 minutes—that's the win probability impact if they played a full game.
 
-Isiaih Mosley from Missouri State leads at 0.131. Let me translate what this means in real terms.
+Isiaih Mosley from Missouri State leads at 0.166. Let me translate what this means in real terms.
 
-In a 40-minute game, Mosley improves his team's win probability by 13 percentage points. Think about that: if two evenly matched teams play, the one with Mosley starts with a 56.5% chance of winning instead of 50%. That's a huge advantage.
+In a 40-minute game, Mosley improves his team's win probability by 16.6 percentage points. Think about that: if two evenly matched teams play, the one with Mosley starts with a 66.6% chance of winning instead of 50%. That's a huge advantage.
 
-Over a 30-game season, that 6.5-point edge translates to roughly 2 additional wins. In college basketball where tournaments decide everything, 2 extra wins can be the difference between making the NCAA tournament and missing it.
+Over a 30-game season, that 16.6-point edge translates to roughly 5 additional wins. In college basketball where tournaments decide everything, 5 extra wins can be the difference between making the NCAA tournament and missing it.
 
-Notice the drop-off. The number 2 player, Sir'Jabari Rice, is at 0.108. By the time you get to the 5th or 6th player, you're around 0.08 or 0.09. Elite players really do stand out.
+Notice the drop-off. The number 2 player, Sir'Jabari Rice, is at 0.143. By the time you get to the 5th or 6th player, you're around 0.09 or 0.10. Elite players really do stand out.
 
 Also note these players have large sample sizes—100+ games, 3000+ minutes. We're not basing these rankings on small samples. These are well-established effects.
 :::
@@ -500,8 +496,8 @@ This is exactly why we need a comprehensive metric like RAPM. Box score stats li
 ::: {.fragment}
 **Findings:**  
 - Conference effects are **statistically significant** (F = 22.4, p < 0.001)  
-- But **practically modest:** ±3% WP per 40 minutes  
-- **Player effects 5× larger:** Best player (+13%) vs. best conference (+2.6%)  
+- But **practically modest:** ±4% WP per 40 minutes  
+- **Player effects 4-5× larger:** Best player (+16.6%) vs. best conference (+3.7%)  
 :::
 
 ::: {.fragment}
@@ -511,9 +507,9 @@ This is exactly why we need a comprehensive metric like RAPM. Box score stats li
 ::: notes
 This plot shows conference fixed effects—basically, how much better or worse teams perform than their roster quality would predict.
 
-Big Ten teams outperform by 2.6 percentage points per 40 minutes. Non-major conferences underperform by about 3.4 points. The range is 6 points total.
+Big 12 teams outperform by 3.7 percentage points per 40 minutes. Non-major conferences underperform by about 5.0 points. The range is about 8.7 points total.
 
-Now compare this to player effects. The range for players is 30 percentage points—from Mosley at +13% to the worst players at -15%. Players vary five times more than conferences.
+Now compare this to player effects. The range for players is approximately 37 percentage points—from Mosley at +16.6% to the worst players at around -20%. Players vary four to five times more than conferences.
 
 An interesting statistical note: these conference effects are highly statistically significant. The F-test gives us F equals 22.4 with a p-value less than 0.001. That means the effect is real, not just random chance.
 
@@ -531,7 +527,7 @@ The takeaway is clear: individual talent dominates. Conference matters—probabl
 ::: notes
 This four-panel summary captures our key findings visually.
 
-Top left shows our top players—Mosley leading with 13 percentage points of win probability impact per 40 minutes. Clear drop-off from elite to very good.
+Top left shows our top players—Mosley leading with 16.6 percentage points of win probability impact per 40 minutes. Clear drop-off from elite to very good.
 
 Top right shows the distribution of all qualified players. Most cluster near zero, which is correct—most players are average. The approximately normal distribution validates our approach.
 
@@ -548,8 +544,8 @@ Together, these four plots demonstrate that our methodology produces sensible, v
 
 **What We Accomplished:**  
 ✓ Built well-calibrated win probability model (Logistic > XGBoost)  
-✓ Quantified player impact: Top players have 10-13% WP impact per 40 min  
-✓ Showed individual talent is 5× more important than conference  
+✓ Quantified player impact: Top players have 12-17% WP impact per 40 min  
+✓ Showed individual talent is 4-5× more important than conference  
 ✓ Validated methodology with proper regularization  
 
 ::: {.fragment}
@@ -570,9 +566,9 @@ Let me summarize what we've accomplished and where this could go.
 
 We built a win probability model that prioritizes calibration over pure discrimination. This was crucial—we showed that simpler models can outperform complex ones when accurate probabilities matter.
 
-We quantified player impact on winning. The top players move the needle by 10-13 percentage points per 40 minutes. That's the difference between a 50-50 team and a team that wins 56% of their games.
+We quantified player impact on winning. The top players move the needle by 12-17 percentage points per 40 minutes. That's the difference between a 50-50 team and a team that wins 62-67% of their games.
 
-We showed that while conferences have measurable effects, individual player talent is five times more important. This has implications for recruiting strategy.
+We showed that while conferences have measurable effects, individual player talent is four to five times more important. This has implications for recruiting strategy.
 
 And we validated our methodology. The strong regularization prevents overfitting. Our estimates are conservative but stable.
 
