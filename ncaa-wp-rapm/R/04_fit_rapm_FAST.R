@@ -139,17 +139,6 @@ if ("leverage" %in% names(shifts)) {
 
 weights <- weights * (nrow(shifts) / sum(weights))
 
-#  Down-weight older seasons (NCAA-specific robustness)
-# Most recent season gets full weight, older seasons decay exponentially
-current_season <- max(shifts$season, na.rm = TRUE)
-half_life <- 1.0
-decay_lambda <- log(2) / half_life
-season_decay <- exp(-decay_lambda * (current_season - shifts$season))
-weights <- weights * season_decay
-
-
-# Re-normalize after time-decay to keep total weight stable
-weights <- weights * (length(weights) / sum(weights))
 
 valid_shifts <- which(rowSums(X != 0) > 0 & is.finite(y))
 valid_players <- which(colSums(X != 0) > 0)

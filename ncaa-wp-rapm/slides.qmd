@@ -1,6 +1,6 @@
 ---
-title: "Player Impact via Win Probability RAPM"
-subtitle: "NCAA Men's Basketball Analysis (2018-2024)"
+title: "Measuring What Matters"
+subtitle: "Player Impact via Win Probability RAPM in NCAA Basketball"
 author: "NCAA RAPM Analysis Team"
 date: "October 6, 2025"
 format:
@@ -39,249 +39,552 @@ best_calib_slope <- wp_eval %>%
 shrinkage_factor <- 0.149  # From logged output
 ```
 
-## Player Value Beyond the Box Score (Background) {.smaller}
-**Goal:** Measure individual player impact on **win probability**, not just points
+# Background
 
-- Traditional stats (PPG, RPG) miss **context** and **team dynamics**
-- On/off the court metrics mix the effects of lineup quality with individual skill
-- **Win Probability** captures game status: score, time, leverage
+## The Problem: Who Really Helps Teams Win? {.smaller}
+
+**Scenario:** Two players, both average 15 points per game
 
 ::: {.fragment}
-**Our Approach:** Regularized Adjusted Plus-Minus on the WP scale
+**Player A:**  
+- Scores efficiently when team is winning  
+- Makes mistakes in close games  
+- Gets stats in blowouts  
+:::
+
+::: {.fragment}
+**Player B:**  
+- Scores critical baskets in clutch moments  
+- Plays elite defense (not in box score)  
+- Creates open shots for teammates  
+:::
+
+::: {.fragment}
+**Question:** Who is more valuable? Traditional stats say they're equal!
 :::
 
 ::: notes
-Good afternoon. We are presenting our analysis of player impact in NCAA D1 men's basketball using a win probability framework. The goal is simple but powerful: we want to measure how much each player alters on their team's chance of winning, not just how many points they score.
+Welcome. Imagine two NCAA players who both average 15 points per game. On paper, they look identical.
 
-Traditional box score statistics, such as points per game, do not include the context. A bucket with 30 seconds left in a tie game is worth much more than one in non-clutch time. The on/off metrics get mixed up by who is playing with who. Our approach uses Regularized Adjusted Plus-Minus on the win probability scale to isolate individual impact while accounting for game context.
+Player A is efficient but gets most of his points when the game is already decided—either his team is way ahead or way behind. In close games, he makes critical turnovers. He pads stats in garbage time.
+
+Player B is the opposite. He hits clutch shots with the game on the line. He plays lockdown defense that doesn't show up in the box score. He makes smart passes that create easy buckets for teammates.
+
+The question is: who's more valuable? Traditional statistics would say they're equal—both average 15 points. But intuitively, we know Player B helps his team win more. Our goal is to quantify this difference.
 :::
 
 ---
 
-## The Data Challenge (Background) {.smaller}
-#Background
-**Data:** ESPN/hoopR, 7 seasons (2018-2024), 38K+ games, 12M+ plays
+## Why Traditional Metrics Fall Short {.smaller}
 
-**Limitation:** No substitution events in the data (tracking players on the court)
+**Points Per Game (PPG):**  
+- Doesn't account for *when* points are scored (clutch vs. garbage time)  
+- Ignores defense, passing, spacing  
+- Context-blind  
 
 ::: {.fragment}
-**Our solution:**
-- Use **starter-based, half-level stints** (justifiable)
-- Track unique players by `athlete_id` (1,411 name collisions)
-- Weight: duration × leverage (close/clutch games matter)
+**Plus-Minus (+/-):**  
+- Mixes individual skill with teammate quality  
+- "Good player on bad team" looks terrible  
+- No adjustment for opponents  
+:::
+
+::: {.fragment}
+**What We Need:** A metric that:  
+✓ Weights **game context** (close games > blowouts)  
+✓ **Isolates** individual impact from teammates  
+✓ **Adjusts** for opponent strength  
 :::
 
 ::: notes
-We're working with seven seasons of ESPN data via the hoopR package—that's 38,000 games and over 12 million plays. But our challenge is that ESPN doesn't provide substitution events, so we do not know exactly when players sub in and out for on-court lineups. Thus, granularly, we do not know the exact moments players are on the court.
+Traditional metrics have three main problems.
 
-- Our solution is to use starter-based, half-level stints because this gives a clean window to evaluate performance. Therefore, we know that the starters are on the court at the start of the half until the first sub or timeout. It's not perfect, but it's justifiable given the data constraints. 
-- We then found that we must track players by unique athlete ID, not display names, because we found 1,411 names that map one to many with multiple different athletes—imagine aggregating 18 different "Jalen Johnsons" into one phantom super-player! That would completely invalidate our rankings.
-- We then weighted the stints by duration and leverage—close, clutch games get more weight than blowouts. 
-- And we apply time decay, so recent seasons matter more than 2018.
+Points per game treats all points equally. A basket to make it 90-70 counts the same as a basket to tie the game in the final minute. That makes no sense.
 
+Plus-minus is better because it tracks team performance while a player is on court. But it has a fatal flaw: it mixes individual skill with context. A great player on a bad team will have a negative plus-minus just because his teammates are weak. We can't tell if the player is good or the team is good.
+
+What we need is a metric that does three things: First, weight game context so close games matter more than blowouts. Second, isolate individual impact by accounting for teammates and opponents. Third, adjust for strength of competition.
+
+That's what we built.
 :::
 
 ---
 
-## Modeling Steps (Analysis) {.smaller}
-#Analysis
-**Part 1: Win Probability Model**
+## Our Solution: Win Probability Framework {.smaller}
 
-Features: score differential, time, interactions, possession, clutch-time indicators
-
-Models tested: Logistic, GBM, Random Forest, XGBoost
-
-**Selection by:** Brier Score + Calibration (not just AUC!)
+**Key Insight:** Not all moments are equally important
 
 ::: {.fragment}
-**Part 2: RAPM Estimation**
+**Win Probability (WP):** Chance team will win given current game state  
+- Score: 65-68, Time: 2:00 remaining → WP ≈ 30%  
+- Score: 78-65, Time: 5:00 remaining → WP ≈ 95%  
+:::
 
-Response: ΔWP per minute (limit: +/-2%)
-
-Design Matrix: player IDs + unique IDs + fixed effects for team/conference/season
-
-Regularization: Ridge/Lasso/Elastic + baseline OLS
+::: {.fragment}
+**Our Metric:** Change in Win Probability (ΔWP) per minute  
+- When Player X is on court, how much does WP change?  
+- Automatically weights clutch situations  
+- Directly measures impact on winning  
 :::
 
 ::: notes
-Our approach has two parts. First, we build a win probability model that predicts the probability a team will win at any moment in the game. We tried four model types—logistic regression, gradient boosting, random forest, and XGBoost. Rather than just looking at how well the models rank outcomes using AUC, we considered the Brier score and calibration to look at the accuracy. We wanted the predicted probabilities to be as close as possible to the real probabilities of winning. For example, if the model predicts a 70% chance of winning, but in reality it is only 60%. This difference causes problems later in the second part with the accuracy of our calculations, as they rely on these probabilities.
+Our innovation is using a win probability framework.
 
-In part 2, we estimate RAPM. The response variable is the change in win probability per minute, restricted at plus or minus 2% which handles outliers. We build a model matrix from player IDs, unique IDs, and the fixed effects for teams, conferences, and seasons. Our matrix has most of the values at zero because only 5 players are active on the court at one time. The unique player IDs are critical because there are several names that map to multiple different athletes. The fixed effects help isolate player skill by controlling for variations in team strength, season chances, etc.. Then, to regularize, we use ridge, lasso, and elastic net regularization, and an unregularized baseline to prevent overfitting. The unregularized baseline is a great sanity check to compare results with the regularized methods to ensure they worked.
+Win probability is simple: at any moment in a game, what's the chance the home team wins? If you're down 3 points with 2 minutes left, maybe you have a 30% chance. If you're up 13 with 5 minutes left, maybe 95%.
 
-In the next step, we create a design matrix to represent which players are on the court during each stint of the game. This matrix is sparse, meaning most of the values are zero because only 5 players are active at any time. Using unique player IDs is very important here to correctly track each individual’s contribution.
-We also include fixed effects for teams, conferences, and seasons. These fixed effects help control for differences in team strength, the competitive level of different conferences, and changes across seasons, so we can better isolate each player’s true impact.
+Our metric tracks how this probability changes when specific players are on the court. If win probability goes from 50% to 60% during a 5-minute stretch, we want to know which players deserve credit.
 
-To estimate player effects, we apply several types of regularized regression models: ridge, lasso, and elastic net. These techniques help prevent overfitting by adding a shrinkage penalty to bring coefficients toward zero to make the model more stable, as one player's effect does not take all the credit. We also run an unregularized baseline model without any penalty as a sanity check, to compare results and ensure our regularization methods are working as expected.
+This automatically handles context. A play that swings win probability from 50% to 60% is huge—that's a 10-point swing in a close game. A play that goes from 95% to 98% is basically meaningless—the game was already won.
 
+We measure change in win probability per minute, adjust for teammates and opponents, and that gives us each player's true impact on winning.
 :::
 
 ---
 
-## Model Selection (Analysis) {.smaller}
+## Data & Limitations {.smaller}
+
+**Dataset:** ESPN/hoopR, 7 seasons (2018-2024)  
+- 38,625 games  
+- 12.48 million plays  
+- 35,457 unique players  
+
+::: {.fragment}
+**Critical Challenge:** No substitution data  
+- Can't track exact lineup changes during games  
+- Don't know when bench players enter/exit  
+:::
+
+::: {.fragment}
+**Our Approach:**  
+- Use **starter-based, half-level stints**  
+- Starters play ~70-80% of minutes → captures most impact  
+- Results are **exploratory** but methodologically sound  
+:::
+
+::: notes
+We're using seven seasons of ESPN data—38,000 games and over 12 million individual plays. That's comprehensive coverage of NCAA Division 1 basketball.
+
+But we have a critical limitation: ESPN doesn't provide substitution data. We don't know exactly when players check in and out. For NBA analysis, you'd have possession-by-possession lineup data. We don't have that luxury.
+
+Our workaround is to use starter-based, half-level stints. We track the starting five for each team and assume they play the entire first half together, then the entire second half together. This isn't perfect, but starters typically play 70-80% of minutes, so we're capturing most of their impact.
+
+This means our player-level results should be considered exploratory rather than definitive. But the methodology is sound, and with better data, this would be production-ready.
+:::
+
+# Analysis Overview
+
+## Step 1: Build Win Probability Model {.smaller}
+
+**Goal:** Predict P(home team wins) at any game moment
+
+**Input Features:**  
+- Score differential, time remaining  
+- Possession, clutch indicator (time < 5 min, close game)  
+- Interactions: score × time  
+
+::: {.fragment}
+**Models Tested:** Logistic, GBM, Random Forest, XGBoost
+
+**Selection Criterion:** Calibration > Discrimination  
+- **Calibration:** Do predicted probabilities match reality?  
+- **Discrimination (AUC):** Can model rank outcomes?  
+:::
+
+::: {.fragment}
+**Why Calibration Matters:** We use these probabilities to compute ΔWP  
+- If model predicts 70% but truth is 60%, bias propagates through entire analysis  
+:::
+
+::: notes
+Step 1 is building a win probability model. At any point in a game—say, 5 minutes left, home team down by 3 points—we want to predict the probability the home team wins.
+
+We use features like score differential, time remaining, who has possession, and whether it's clutch time—defined as under 5 minutes in a close game. We also include interactions like score times time, because a 10-point lead with 1 minute left is different from 10 points with 10 minutes left.
+
+We tested four model types: logistic regression, gradient boosting, random forest, and XGBoost. Most analysts would just pick the model with the highest AUC—the one that best ranks outcomes. But we did something different.
+
+We prioritized calibration over discrimination. Calibration asks: do the predicted probabilities match reality? If you predict 70% win probability in 100 similar situations, do teams actually win 70 of those 100 games?
+
+This matters because we're using these probabilities to compute win probability changes. If the model systematically overestimates or underestimates probabilities, that bias flows through our entire analysis. We can't afford that.
+:::
+
+---
+
+## Model Selection Results {.smaller}
 
 ```{r wp-results, echo=FALSE}
 wp_eval %>%
   filter(Dataset == "Test") %>%
-  select(Model, AUC, Brier_Score, Calib_Intercept, Calib_Slope) %>%
-  kable(digits = 3, col.names = c("Model", "AUC", "Brier", "Calib. Intercept", "Calib. Slope"))
+  select(Model, AUC, Brier_Score, Calib_Slope) %>%
+  mutate(Calib_Quality = case_when(
+    abs(Calib_Slope - 1) < 0.2 ~ "Excellent",
+    abs(Calib_Slope - 1) < 0.5 ~ "Good",
+    TRUE ~ "Poor"
+  )) %>%
+  kable(digits = 3, col.names = c("Model", "AUC", "Brier Score", "Calib. Slope", "Quality"))
 ```
 
-**Winner:** `r best_model` (Brier = `r sprintf("%.3f", wp_eval %>% filter(Model == best_model, Dataset == "Test") %>% pull(Brier_Score))`, Slope ≈ `r sprintf("%.2f", best_calib_slope)`)
-
-Perfect calibration: Intercept ≈ 0, Slope ≈ 1
+::: {.fragment}
+**Winner:** Logistic Regression  
+- Near-perfect calibration (slope = 1.05)  
+- Slightly lower AUC than XGBoost, but much better probabilities  
+- **Key lesson:** Simpler models can win when goal is probability estimation  
+:::
 
 ::: notes
-Here are the results from our win probability model comparison. Looking at the test data, all models have AUC scores around 0.85 to 0.86, which means they rank the team's chances of winning appropriately. 
+Here are our model results on test data. All four models achieve similar AUC scores around 0.85-0.86, meaning they all rank outcomes about equally well.
 
-However, when we look at calibration (accuracy of probabilities), the differences are apparent. Perfect calibrations have an intercept near zero and a slope near one. Here, the logistic regression model has an intercept of -0.23 and a slope of 1.05, which is close to perfect calibration. XGBoost has the highest AUC, yet has bad calibration as the slope is 3.76, which means the predicted win probabilities would be unreliable and inaccurate.
+But look at calibration slope. Perfect calibration is a slope of 1.0. Logistic regression gets 1.05—nearly perfect. XGBoost gets 3.76—terrible. XGBoost is systematically overconfident. When it predicts 70%, the true probability might only be 55%.
 
-Therefore, we selected the logistic regression model. Sometimes the simple model wins when the goal is to get accurate probabilities, rather than adequate rankings.
+We selected logistic regression. Despite having slightly lower AUC than XGBoost, its probabilities are trustworthy. This is a key lesson: the fanciest model isn't always the best model. When your goal is accurate probability estimation, sometimes the simple linear model wins.
+
+This model forms the foundation for everything that follows. Every play in every game, we predict win probability. Then we track how it changes.
 :::
 
 ---
 
-## Win Probability: Calibration Quality (Analysis) {.smaller}
+## Win Probability Model Performance {.smaller}
 
-![Calibration curve for best model (Logistic): predicted vs observed win rate](figs/wp_calibration_best.png){fig-alt="Calibration plot showing logistic model predictions vs actual outcomes, with points near the diagonal indicating good calibration" width="75%"}
+::: {layout-ncol=2}
+![](figs/wp_model_performance.png){fig-alt="AUC comparison across models" width="100%"}
+
+![](figs/wp_calibration.png){fig-alt="Calibration curves for all models" width="100%"}
+:::
+
+::: {.fragment}
+- **Left:** All models achieve similar AUC (~0.86), minimal overfitting  
+- **Right:** Logistic (purple) tracks diagonal = well-calibrated; XGBoost (yellow) overconfident  
+:::
 
 ::: notes
-This chart shows how well our selected model predicted probabilities against what was observed and happened. The diagonal line is where the predicted outcomes are equal to the observed outcomes. The points on the plot show our model across various probabilities, which line up very close to the baseline diagonal line. For example, it predicts a 30% chance of winning when the teams really do win 30% of the time.
-The size of each point shows how many plays are in that range. This model shows that our data covers various win probabilities from low to high.
+These plots show why we chose logistic regression visually.
+
+The left panel compares AUC across all four models on training and test data. You can see they're all similar—around 0.85 to 0.86. There's minimal overfitting because the test bars are almost as high as the training bars. From a discrimination perspective, all models are comparable.
+
+The right panel is the calibration plot. The diagonal line represents perfect calibration—predicted probabilities match observed frequencies. Logistic regression, in purple, tracks that diagonal beautifully. XGBoost in yellow systematically deviates, especially at extreme probabilities.
+
+This is why calibration matters more than AUC for our application. We're computing win probability changes, so we need accurate probabilities, not just good rankings.
 :::
 
 ---
 
-## Model Performance Across Types (Analysis) {.smaller}
+## Step 2: Construct Stints & Compute ΔWP {.smaller}
 
-![Test AUC comparison across all models](figs/wp_model_performance.png){fig-alt="Bar chart comparing AUC scores across Logistic, GBM, Random Forest, and XGBoost models on train and test sets" width="75%"}
+**Stints:** Half-level stretches with known starting lineups  
+- First half: 5 home starters vs. 5 away starters (~20 minutes)  
+- Second half: same process  
+- Result: 37,974 valid 5-on-5 stints  
+
+::: {.fragment}
+**Compute ΔWP:**  
+$$\Delta WP_{stint} = WP_{end} - WP_{start}$$
+Normalize to per-minute scale, cap at ±2% per minute
+:::
+
+::: {.fragment}
+**Weighting:**  
+- **Duration:** Longer stints → more reliable (square root weighting)  
+- **Leverage:** Close games (2.0×), blowouts (0.5×)  
+- **No time decay:** All seasons weighted equally (historical evaluation, not forecasting)  
+:::
 
 ::: notes
-This chart compares the AUC scores across all four models. The light blue shows training AUC, and the dark blue is the test AUC. The models show that AUC is only slightly lower than the training ones, which shows that overfitting is not apparent in our model on the training data, but focuses more on the actual relationships and patterns.
+Step 2 is constructing stints and computing win probability changes.
 
-XGBoost has a higher AUC at 0.86, but we selected the logistic regression model because it is calibrated better. Higher AUC doesn't always mean it is the best because better calibration means more accurate probabilities, which is more valuable than slightly better rankings.
+Remember, we don't have substitution data, so we work with half-level stints. For each game's first half, we identify the 5 home starters and 5 away starters. We assume they play together the entire half. We repeat for the second half. This gives us about 38,000 valid 5-on-5 stints across seven seasons.
+
+For each stint, we compute the change in win probability: final minus initial. We normalize this to a per-minute scale and cap extreme values at plus or minus 2% per minute to handle outliers.
+
+Then we apply weights. Longer stints get more weight because they're more reliable—we use square root weighting to avoid over-emphasizing extremely long stints. Close games get double weight compared to normal games, and blowouts are down-weighted to half. 
+
+Importantly, we do NOT apply time decay to down-weight older seasons. This is a historical evaluation across all seven seasons, not a forecasting exercise. We want to compare players fairly regardless of when they played. Season fixed effects in our model control for era-specific differences like rule changes.
+
+This weighting is crucial. We want our estimates to reflect what matters: competitive game situations with reliable sample sizes.
 :::
 
 ---
 
-## RAPM Results: Top Players (Results) {.smaller}
+## Step 3: RAPM via Regularized Regression {.smaller}
+
+**Problem:** Which players caused the ΔWP? Must account for teammates & opponents
+
+**Design Matrix (sparse):**  
+- Each row = one stint  
+- Each column = one player  
+- Home starters get +1, away starters get -1  
+- **Fixed effects:** team, conference, season  
+
+::: {.fragment}
+**Regularization (Ridge, Lasso, Elastic Net):**  
+- 10,000+ players, only 38,000 stints → severe overfitting risk  
+- Shrinkage penalty pulls estimates toward zero  
+- Players with limited data → conservative estimates  
+- **Result:** Shrinkage factor = 0.15 (strong regularization)  
+:::
+
+::: notes
+Step 3 is using regularized regression to isolate individual player effects—this is the RAPM part.
+
+The problem is attribution. If a lineup's win probability goes up 10%, which of the 5 players deserve credit? And how do we account for the 5 opponents who were on the other side?
+
+We build a design matrix where each row is a stint and each column is a player. If a player was a home starter, they get +1. If they were an away starter, -1. We also include fixed effects for teams, conferences, and seasons to control for systematic differences.
+
+This is a huge matrix—10,000 players across 38,000 stints—and most entries are zero because only 10 players are on court each stint. That's why it's sparse.
+
+Now here's the critical part: with 10,000 players and only 38,000 stints, we have severe overfitting risk. A player who happened to be on court for a few lucky stints could look like a superstar. That's where regularization comes in.
+
+Ridge regression applies a shrinkage penalty that pulls all coefficients toward zero. Players with strong, consistent evidence of impact keep high estimates. Players with limited or noisy data get conservative estimates close to zero. Our final shrinkage factor is 0.15, meaning our estimates vary 15% as much as an unregularized model would produce. That's strong regularization, but it's necessary given the data noise.
+:::
+
+# Main Results
+
+## Top Players: Impact on Winning {.smaller}
 
 ```{r top-players, echo=FALSE}
 rapm_main %>%
   arrange(desc(ridge_rapm)) %>%
   select(player, ridge_per40, games_played, total_minutes) %>%
-  slice_head(n = 10) %>%
-  kable(digits = 3, col.names = c("Player", "Ridge RAPM (per 40 min)", "Games", "Minutes"))
+  slice_head(n = 8) %>%
+  mutate(ridge_per40 = sprintf("%.3f", ridge_per40)) %>%
+  kable(col.names = c("Player", "RAPM (per 40 min)", "Games", "Minutes"))
 ```
 
-**Key insight:** Each +0.001 RAPM ≈ +0.1% WP change per possession (40 min ≈ 80 possessions)
-
-Isiaih Mosley: +0.131 per 40 minutes ≈ **+13% Win Probability swing** in a full 40-minute game
+::: {.fragment}
+**Interpretation:** Isiaih Mosley's 0.131 = **+13 percentage points of win probability**  
+- In a tied game, his team starts with ~56.5% chance (instead of 50%)  
+- That's 2 extra wins per 30-game season  
+:::
 
 ::: notes
-Now, for player rankings, this table displays the top 10 players based on their Ridge RAPM, which means how much a player changes their team's win probability for every 40 minutes on the court. It is important to note that we only include players who have at least 2,000 career minutes and over 50 games throughout 7 seasons. We picked these arbitrary thresholds because we wanted to ensure there was enough data for players, and due to our data limitations based on the lack of substitution data, we may focus more on starters. 
+Here are our top players. We're showing their Ridge RAPM per 40 minutes—that's the win probability impact if they played a full game.
 
-Isiaih Mosely is at the top of the list with a RAPM of 0.131. This means for every 40 minutes, a typical 40-minute game, with about 80 possessions, his presence impacts the team's win probability about 12 percentage points compared to a relative, baseline replacement player, which is a lot!
+Isiaih Mosley from Missouri State leads at 0.131. Let me translate what this means in real terms.
 
-Sir'Jabari Rice and Gavin Kensmil do not have large values as they are more realistic and have a shrinkage penalty that brings their effect closer to baseline 0.  
+In a 40-minute game, Mosley improves his team's win probability by 13 percentage points. Think about that: if two evenly matched teams play, the one with Mosley starts with a 56.5% chance of winning instead of 50%. That's a huge advantage.
+
+Over a 30-game season, that 6.5-point edge translates to roughly 2 additional wins. In college basketball where tournaments decide everything, 2 extra wins can be the difference between making the NCAA tournament and missing it.
+
+Notice the drop-off. The number 2 player, Sir'Jabari Rice, is at 0.108. By the time you get to the 5th or 6th player, you're around 0.08 or 0.09. Elite players really do stand out.
+
+Also note these players have large sample sizes—100+ games, 3000+ minutes. We're not basing these rankings on small samples. These are well-established effects.
 :::
 
 ---
 
-## Distribution and Shrinkage (Results) {.smaller}
+## Top 30 Players Visualization {.smaller}
+
+![](figs/top_players_rapm.png){fig-alt="Bar chart of top 30 players by Ridge RAPM" width="90%"}
+
+::: {.fragment}
+- Rapid drop-off after top 3-5 reflects appropriate shrinkage  
+- All qualified players: ≥2000 minutes, ≥50 games  
+:::
+
+::: notes
+This visualization shows the top 30 players ranked by Ridge RAPM. You can see the clear drop-off—Mosley at the top is significantly ahead of everyone else.
+
+The gap between positions 1-3 and positions 4-10 is substantial. Then it flattens out. This is exactly what we want to see from our regularization. If there were no shrinkage, we'd see wild swings. If there were too much shrinkage, everyone would be at the same level.
+
+This pattern reflects real differences in elite talent combined with conservative estimation for players with less overwhelming evidence. Remember, all these players cleared our minimum thresholds—at least 2000 total minutes and 50 games played.
+:::
+
+---
+
+## Distribution: Most Players Are Average {.smaller}
 
 ::: {layout-ncol=2}
-![RAPM distribution across all qualified players](figs/rapm_distribution.png){fig-alt="Histogram of Ridge RAPM values showing normal distribution centered near zero" width="100%"}
+![](figs/rapm_distribution.png){fig-alt="Histogram showing normal distribution of RAPM values" width="100%"}
 
-![Ridge vs Lasso comparison](figs/ridge_vs_lasso.png){fig-alt="Scatter plot comparing Ridge and Lasso RAPM estimates" width="100%"}
+![](figs/ridge_vs_lasso.png){fig-alt="Ridge vs Lasso comparison" width="100%"}
 :::
 
-**Shrinkage factor:** `r sprintf("%.3f", shrinkage_factor)` (Ridge SD / Baseline SD)
-
-Strong regularization (moderate to large shrinkage penalty) → conservative and consistent estimates
+::: {.fragment}
+- **Left:** Most players cluster near zero (average impact)  
+- **Right:** Ridge preserves variation; Lasso shrinks almost everything to zero  
+- Strong regularization prevents overfitting to noise  
+:::
 
 ::: notes
-The left plot shows the distribution of RAPM values for all qualified players that meet our threshold requirements. This appears to be approximately normal and centered around zero, which lines up with our expectations because most players have an average impact, as some stand out or have a negative impact, with the exception that some stand-out players are outliers. 
+These plots show the full distribution of player impacts.
 
-The plot on the right compares the Ridge and Lasso estimates. Lasso pushes almost everything to zero on this line of points. Then, the Ridge maintains the variation across players with a shrinkage factor of 0.149, which means estimates vary 15% as much as the unregularized estimates. This is a strong shrinkage factor, but there may be a lot of random noise in the data for every stint.
+The left histogram shows that most players cluster near zero, which makes sense. Most college players are average. Some are positive, some are negative, but the majority are close to neutral impact. The distribution looks approximately normal, which validates our approach.
 
-This regularization is more conservative and has smaller impact estimates because we do not want a model to be mostly guided by noise, and it prevents players with less data from being unfairly estimated as good or bad.
+The right plot compares two regularization methods. Lasso regression is very aggressive—it pushes most coefficients all the way to zero, shown by that horizontal line of dots. Ridge regression is more moderate. It shrinks coefficients toward zero but preserves the ranking and relative differences between players.
+
+We chose Ridge because we wanted to measure everyone, not just identify a handful of stars. Lasso is useful for variable selection when you want sparsity. We want estimates for all players, even if they're conservative.
+
+This strong regularization is what prevents us from overfitting to noise. Without it, random chance in stint-level data would produce wildly unstable player rankings.
 :::
 
 ---
 
-## Conference Fixed Effects (Results) {.smaller}
+## Validation: No Minutes Bias {.smaller}
 
-![Conference impact on win probability (adjusted for roster quality)](figs/conference_effects.png){fig-alt="Bar chart of conference fixed effects showing coaching/system impact beyond player talent" width="70%"}
+![](figs/rapm_vs_minutes.png){fig-alt="RAPM vs average minutes with loess smooth" width="70%"}
 
-**Key finding:** Conference effects are **statistically significant but practically modest**
-
-- Conference range: +/-3% WP per 40 minutes
-    - Big Ten +2.6% & Other -3.4%
-- Player range: +/-15% WP per 40 minutes 
-- **Player effects 5× larger than conference effects** → individual talent dominates
-- Statistical test: F = 22.4 (p < 0.001), but only 0.7% Mean Squared Error improvement
+::: {.fragment}
+- Flat loess curve confirms regularization removes playing-time bias  
+- Correlation ≈ 0 (not measuring minutes, measuring impact)  
+- High-minute players aren't systematically favored  
+:::
 
 ::: notes
-These are interesting findings, with one being that these numbers are conference fixed effects from the model. This shows how much better or worse a conference team's performance is based on the talent of the players. 
+This is a critical validation check. We're plotting RAPM against average minutes played per game.
 
-The range of conference effects is 6 percentage points of win probability per 40 minutes, as the Big Ten is about +2.6% and the other conferences are at -3.4%. Individual player effects are bigger by around 30 percentage points. Isiaih Mosely is +13% and the worst players are at -15%. 
+If our model was flawed, we might just be measuring who plays the most. Good players play more minutes, so maybe we're just capturing that correlation. But look at this plot—the loess smoothing curve is nearly flat.
 
-Conferences are statistically significant because when we compare models with and without fixed effects, the F-statistic is 22.4 with a p-value less than .0001, which means the effect is highly unlikely due to random chance. However, we found that adding the conferences improved prediction error by reducing the Mean Squared Error by 0.7%, which is small, whereas player effects are 5 times larger. 
+The correlation is essentially zero. High-minute players aren't systematically rated better. Low-minute players aren't penalized. This confirms our regularization is working correctly. We're measuring impact per minute, not total minutes.
 
-Since we have 37,668 stints, which is a huge sample, this large amount of data can create small differences to show up as real effects, rather than noise. However, logistically speaking, the effect is still very small compared to individual players' skills.
-
-Thus, within the context of how much NCAA D1 basketball players impact their team's success is that while conferences have effects on win success, like probably by having specific resources, systems, and coaching, the player's individual talent is what impacts the success outcome more. 
+This is exactly what we want. RAPM should be independent of playing time. A player who averages 25 minutes with high impact should rate similar to a player who averages 35 minutes with high impact, per minute of play.
 :::
 
 ---
 
-## Key Findings (Conclusion) {.smaller}
+## RAPM by Position {.smaller}
 
-**Methodology validated:**
-- Calibration to selection models → Logistic regression model
-- Player ID tracking (prevented 1,411 player merges!)
-- Strong regularization to combat noisy stint-level data
+![](figs/rapm_by_position.png){fig-alt="Box plots of RAPM distribution by position" width="70%"}
 
-**Substantive results:**
-- Top players: Isiaih Mosley, Sir'Jabari Rice, and Gavin Kensmil (10-13% WP impact per 40 minutes)
-- **Player effects: 5× bigger than conference effects** (individual talent > conference)
-- Conference effects: apparent (+2.6% Big Ten, -3.4% Other) but not relatively impactful
-- Shrinkage factor 0.15 → conservative, stable estimates
+::: {.fragment}
+- **Guards:** Wider spread (high-impact playmakers and negative players)  
+- **Centers:** Tighter clustering (consistent but limited roles)  
+- **Forwards:** Intermediate variance  
+:::
 
 ::: notes
-In summary, we chose models based on calibration to prevent choosing models that rank the players well but do not adequately estimate their win probabilities. 
+Breaking down RAPM by position reveals interesting patterns.
 
-It was helpful to track player IDs so >1,400 athletes were not merged.
-The strong regularization with the large shrinkage penalty of 0.15 was essential to handle the noise in our data to create more conservative estimates, especially with players who had fewer minutes.
+Guards show the widest spread. You have elite playmakers with very high positive RAPM, but also some guards with significantly negative impact. This makes sense—guards handle the ball the most, so they have the most opportunity to create value or destroy it through turnovers and bad shots.
 
-Top players have 10-13% impact on win probability per 40 minutes, which is well above the baseline of 0% impact. While conference effects are apparent, they are not substantial, it is only by 0.7% percentage points, which signifies player's individual talent is what drives a team's success more.
+Centers cluster more tightly around zero. They tend to be more consistent, but their roles are often more limited. They're not initiating offense as much. They protect the rim, rebound, finish at the rim. Important, but less variable.
+
+Forwards are in between, which tracks with their hybrid roles in modern basketball.
+
+This suggests future work could use position-specific priors in a Bayesian framework. We could shrink guards less aggressively since they have more opportunities to demonstrate skill, and shrink centers more conservatively given their limited touches.
 :::
 
 ---
 
-## Next Steps (Conclusion) {.smaller}
+## Shooting Efficiency & RAPM {.smaller}
 
-**Data improvements:**
-1. **Substitution events** → possession-level data
-2. Opponent lineup interactions → player-matchup effects
-3. Play context (shot location, defensive schemes)
+::: {layout-ncol=2}
+![](figs/rapm_vs_shooting.png){fig-alt="RAPM vs free throw percentage, colored by 3P%" width="100%"}
 
-**Modeling refinements:**
-1. Bayesian hierarchical priors → smarter shrinkage by position/role and better intervals for ranking
-2. Cross-validation by season or conference → estimate out-of-sample error → evaluate model robustness
-
-**Application:**
-- Efficient lineups, transfer portal, recruiting
-
-::: notes
-The biggest opportunity is getting substitution data. If we knew exactly when players checked in and out onto the court, we could build possession-level lineup data rather than half-level approximations and be able to include more data on players who are not starters.
-
-We could add opponent lineup interactions to obtain player-matchup effects. All in all, if we have more granular play data with more context, we can create improved estimates. 
-
-Bayesian hierarchical priors can give smarter shrinkage that can vary by position, which includes uncertainty quantification like credible intervals rather than point estimates.
-
-This model/tool can then be applied to help with evaluating players in the transfer portal, recruiting between schools, and building efficient lineups. 
-
-Thank you for your time!
+![](figs/elite_shooters_rapm.png){fig-alt="Top elite shooters by RAPM" width="100%"}
 :::
 
+::: {.fragment}
+- **Left:** Positive correlation between shooting efficiency and RAPM  
+- **Right:** Elite shooters (FT% > 75%, 3P% > 35%) vary widely in impact  
+- **Insight:** Shooting helps but doesn't guarantee high RAPM—defense & IQ matter  
+:::
+
+::: notes
+These plots explore the relationship between shooting skill and overall impact.
+
+The left scatter plot shows RAPM against free throw percentage, with 3-point percentage shown in color. There's a clear positive relationship. Better shooters tend to have higher RAPM, which makes sense—shooting is valuable in basketball.
+
+But look at the spread. Even among elite free throw shooters at 85-90%, RAPM values range from barely positive to highly positive. Shooting alone doesn't determine impact.
+
+The right plot shows the top 20 elite shooters—players with at least 75% free throw shooting and 35% three-point shooting. Even within this elite group, RAPM varies substantially. Some are in the top tier overall, others are merely above average.
+
+This tells us that while shooting is correlated with winning impact, it's not sufficient. Defense, basketball IQ, decision-making, and off-ball movement all matter. Two players with identical shooting percentages can have very different impacts on team success.
+
+This is exactly why we need a comprehensive metric like RAPM. Box score stats like shooting percentage are useful but incomplete.
+:::
+
+---
+
+## Conference Effects: Real but Secondary {.smaller}
+
+![](figs/conference_effects.png){fig-alt="Conference fixed effects" width="60%"}
+
+::: {.fragment}
+**Findings:**  
+- Conference effects are **statistically significant** (F = 22.4, p < 0.001)  
+- But **practically modest:** ±3% WP per 40 minutes  
+- **Player effects 5× larger:** Best player (+13%) vs. best conference (+2.6%)  
+:::
+
+::: {.fragment}
+**Takeaway:** Individual talent >> conference affiliation  
+:::
+
+::: notes
+This plot shows conference fixed effects—basically, how much better or worse teams perform than their roster quality would predict.
+
+Big Ten teams outperform by 2.6 percentage points per 40 minutes. Non-major conferences underperform by about 3.4 points. The range is 6 points total.
+
+Now compare this to player effects. The range for players is 30 percentage points—from Mosley at +13% to the worst players at -15%. Players vary five times more than conferences.
+
+An interesting statistical note: these conference effects are highly statistically significant. The F-test gives us F equals 22.4 with a p-value less than 0.001. That means the effect is real, not just random chance.
+
+But statistical significance doesn't mean practical importance. With 38,000 stints, we have enormous statistical power to detect tiny effects. Adding conferences to our model only improves prediction error by 0.7%.
+
+The takeaway is clear: individual talent dominates. Conference matters—probably through coaching, systems, and resources—but player skill is five times more important. If you're recruiting, you should care way more about getting great players than about which conference they come from.
+:::
+
+# Conclusion
+
+## Key Results Summary {.smaller}
+
+![](figs/combined_analysis.png){fig-alt="Four-panel summary: top players, distribution, RAPM vs minutes, Ridge vs Lasso" width="100%"}
+
+::: notes
+This four-panel summary captures our key findings visually.
+
+Top left shows our top players—Mosley leading with 13 percentage points of win probability impact per 40 minutes. Clear drop-off from elite to very good.
+
+Top right shows the distribution of all qualified players. Most cluster near zero, which is correct—most players are average. The approximately normal distribution validates our approach.
+
+Bottom left is our validation check—RAPM versus average minutes. The flat relationship confirms we're not just measuring playing time. High-minute and low-minute players can have similar per-minute impact.
+
+Bottom right compares our two regularization approaches. Lasso aggressively shrinks most players to exactly zero. Ridge preserves the ranking while pulling estimates toward zero proportionally. We chose Ridge for this application.
+
+Together, these four plots demonstrate that our methodology produces sensible, validated, and interpretable results.
+:::
+
+---
+
+## Summary & Future Directions {.smaller}
+
+**What We Accomplished:**  
+✓ Built well-calibrated win probability model (Logistic > XGBoost)  
+✓ Quantified player impact: Top players have 10-13% WP impact per 40 min  
+✓ Showed individual talent is 5× more important than conference  
+✓ Validated methodology with proper regularization  
+
+::: {.fragment}
+**Next Steps:**  
+
+1. **Acquire substitution data** → Possession-level analysis (transforms from exploratory to definitive)  
+
+2. **Offensive/defensive decomposition** → Separate O-RAPM and D-RAPM to identify specialists  
+  
+:::
+
+::: {.fragment}
+**Applications:** Recruiting, transfer portal evaluation, lineup optimization
+:::
+
+::: notes
+Let me summarize what we've accomplished and where this could go.
+
+We built a win probability model that prioritizes calibration over pure discrimination. This was crucial—we showed that simpler models can outperform complex ones when accurate probabilities matter.
+
+We quantified player impact on winning. The top players move the needle by 10-13 percentage points per 40 minutes. That's the difference between a 50-50 team and a team that wins 56% of their games.
+
+We showed that while conferences have measurable effects, individual player talent is five times more important. This has implications for recruiting strategy.
+
+And we validated our methodology. The strong regularization prevents overfitting. Our estimates are conservative but stable.
+
+Looking forward, three priorities.
+
+First, and most important, we need substitution data. If we knew exactly when players checked in and out, we could do possession-level analysis instead of half-level approximations. This would transform the analysis from exploratory to definitive. It would also let us include bench players systematically.
+
+Second, we could decompose offense and defense. Right now, RAPM is a single number. But some players are elite defenders with limited offense. Others are offensive stars who struggle on defense. Separate O-RAPM and D-RAPM would identify these specialists.
+
+Third, Bayesian hierarchical models with position-specific priors could provide smarter shrinkage. Right now, we treat all players the same. But guards and centers have different roles. Position-specific priors would improve estimates for players with limited data.
+
+The practical applications are clear: recruiting, transfer portal evaluation, and lineup optimization. Teams could use this to identify undervalued players, make better roster decisions, and optimize rotations.
+
+Thank you.
+:::
