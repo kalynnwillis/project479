@@ -31,13 +31,13 @@ Second, we use statistical techniques to isolate individual player contributions
 
 We identified 2,316 players who met our reliability thresholds (at least 2,000 total minutes and 50 games played). The top performers demonstrate remarkable impact:
 
-- **Isiaih Mosley** leads all qualified players, improving his team's win probability by approximately 17 percentage points over a full 40-minute game. To put this in context: if two evenly-matched teams played, the team with Mosley would start with a 66.6% chance of winning instead of 50%.
+- **Isiaih Mosley** leads all qualified players, improving his team's win probability by approximately 16.6 percentage points over a full 40-minute game. To put this in context: if two evenly-matched teams played, the team with Mosley would start with a 66.6% chance of winning instead of 50%.
 
 - **Sir'Jabari Rice** (14.3 percentage points per 40 minutes) and **Gavin Kensmil** (11.8 points) round out the top three, showcasing elite two-way impact that traditional statistics might miss.
 
 - The distribution of player impacts is roughly bell-shaped and centered near zero, meaning most players have neutral or modest effects, while truly elite players stand out significantly.
 
-We also examined conference effects to understand whether league environment matters beyond individual talent. While we found that major conferences like the Big 12 provide modest advantages (+3.7 percentage points per 40 minutes), these effects are approximately four times smaller than differences between elite and average players. This confirms what coaches intuitively know: recruiting and developing elite players matters far more than conference affiliation.
+We also examined conference effects to understand whether league environment matters beyond individual talent. While we found that major conferences like the Big 12 provide modest advantages (+3.7 percentage points per 40 minutes), these effects are modest compared to player effects. The full player range (36.8 percentage points) is approximately 4.2 times larger than the total conference effect range (8.7 percentage points), and the top player's impact (16.6 points) is 4.5 times larger than the Big 12 advantage. This confirms what coaches intuitively know: recruiting and developing elite players matters far more than conference affiliation.
 
 **Important Limitation**
 
@@ -815,7 +815,7 @@ wp_eval %>%
 
 **Selected model:** `r wp_models$best_model_name` achieves the best Brier score (`r sprintf("%.4f", min(wp_eval$Brier_Score[wp_eval$Dataset == "Test"]))`) with calibration slope near 1.0, despite slightly lower AUC than XGBoost.
 
-**Key finding:** Logistic regression, despite being the simplest model, provides the best-calibrated probabilities. XGBoost achieves slightly higher AUC (0.862 vs 0.858) but shows systematic miscalibration (slope = 0.73), overconfident at extreme probabilities. For our application—computing accurate win probability changes—calibration trumps discrimination.
+**Key finding:** Logistic regression, despite being the simplest model, provides the best-calibrated probabilities. XGBoost achieves slightly higher AUC (0.861 vs 0.858) but shows systematic miscalibration (slope = 3.76), overconfident at extreme probabilities. For our application—computing accurate win probability changes—calibration trumps discrimination.
 
 ## Stint Construction and Response Variable
 
@@ -1848,7 +1848,7 @@ tibble(
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-**Shrinkage factor = `r sprintf("%.3f", shrinkage_factor)`:** Ridge reduces standard deviation to ~15% of baseline estimates, reflecting strong regularization appropriate for noisy stint-level data.
+**Shrinkage factor = `r sprintf("%.3f", shrinkage_factor)`:** Ridge reduces standard deviation to ~20% of baseline estimates, reflecting strong regularization appropriate for noisy stint-level data.
 
 ![Ridge vs Lasso Comparison](figs/ridge_vs_lasso.png){fig-alt="Scatter plot comparing Ridge and Lasso RAPM estimates" width="70%"}
 
@@ -2159,118 +2159,40 @@ Our two-stage process (WP model → RAPM estimation) compounds errors:
 
 Each stage introduces bias and variance. Quantifying total uncertainty requires complex error propagation analysis we haven't performed.
 
-## Recommended Next Steps
+## Future Research Directions
 
-### Immediate Priorities (1-3 months)
+The most critical improvement would be **acquiring substitution data** from NCAA, Synergy Sports, or manual video coding. This would transform the analysis from exploratory to production-ready by enabling possession-level lineup tracking, bench player evaluation, and more precise impact attribution. Without this foundational data upgrade, all methodological extensions remain limited by our half-level stint approximations.
 
-**1. Acquire Substitution Data (Critical)**
+Beyond data acquisition, several methodological extensions could strengthen the analysis:
 
-**Action:** Partner with NCAA, Synergy Sports, or hire video analysts to manually code lineup data for at least one full season.
+### Uncertainty Quantification
 
-**Expected cost:** $10K-50K depending on source.
+Currently, we report point estimates (e.g., Mosley = +0.166) without confidence intervals. Bootstrap resampling could provide 95% confidence intervals for all player estimates, making explicit the estimation uncertainty that varies with sample size. Implementation is straightforward—resample stints with replacement 1,000 times and re-fit the RAPM model for each bootstrap sample. This would prevent overconfident comparisons between similarly-ranked players and identify which rankings are statistically robust.
 
-**Impact:** Transforms analysis from exploratory to production-ready. Enables:
-- Possession-level lineup tracking
-- Bench player evaluation
-- Rigorous validation against NBA draft outcomes
+### Bayesian Hierarchical Models with Position-Specific Priors
 
-**ROI:** High—this is the single most impactful improvement.
+Ridge regression applies uniform shrinkage to all players, but guards with high usage rates may need less shrinkage than centers with limited touches. A Bayesian hierarchical model would allow position-specific priors:
 
-**2. Implement Uncertainty Quantification**
+$$\text{RAPM}_i \sim \text{Normal}(\mu_{\text{position}[i]}, \sigma_{\text{position}[i]}^2)$$
 
-**Action:** Add bootstrap confidence intervals (1,000 resamples, ~2 hours compute time).
+Each position (Guard, Forward, Center) gets its own prior distribution learned from data. Players with limited data are pulled toward their position's average rather than global zero. This could improve prediction accuracy by 10-15% for low-minute players while preserving estimates for high-minute players. Implementation via `brms` or `rstan` in R would require substantial compute time (3-5 days for MCMC) but is methodologically mature.
 
-**Code sketch:**
-```r
-bootstrap_rapm <- function(shifts, n_boot = 1000) {
-  boot_results <- matrix(NA, n_boot, n_players)
-  for (b in 1:n_boot) {
-    # Resample stints with replacement
-    boot_sample <- shifts[sample(nrow(shifts), replace = TRUE), ]
-    # Re-fit RAPM
-    cv_boot <- cv.glmnet(X_boot, y_boot, weights = w_boot, alpha = 0)
-    boot_results[b, ] <- coef(cv_boot, s = "lambda.1se")[2:(n_players+1)]
-  }
-  # Compute 95% CIs
-  ci_lower <- apply(boot_results, 2, quantile, 0.025)
-  ci_upper <- apply(boot_results, 2, quantile, 0.975)
-  return(list(ci_lower = ci_lower, ci_upper = ci_upper))
-}
-```
+### Offensive and Defensive RAPM Decomposition
 
-**Impact:** Moderate—provides transparency about estimation uncertainty, prevents overconfident player comparisons.
+Currently, RAPM is a single number combining offense and defense. Decomposing into separate components would reveal specialists:
 
-**3. Season-Specific Cross-Validation**
-
-**Action:** Hold out entire seasons (e.g., train on 2018-2022, test on 2023-2024) to test temporal stability.
-
-**Impact:** Validates that model generalizes across eras, not just within-season.
-
-### Medium-Term Extensions (3-6 months)
-
-**1. Bayesian Hierarchical Model with Position Priors**
-
-**Conceptual model:**
-$$\text{RAPM}i \sim \text{Normal}(\mu{\text{position}[i]}, \sigma_{\text{position}[i]}^2)$$
-
-Each position (G, F, C) gets its own prior mean and variance, learned from data. Players with limited data are pulled toward their position's average rather than global zero.
-
-**Implementation:** Use `rstan` or `brms` in R (3-5 days compute time for MCMC).
-
-**Expected improvement:** 10-15% MSE reduction for players with <1,000 minutes.
-
-**2. Offensive and Defensive RAPM Decomposition**
-
-Currently, RAPM is a single number combining offense and defense. We could separate:
 - **O-RAPM:** Impact on team's offensive efficiency (points scored per possession)
 - **D-RAPM:** Impact on opponent's offensive efficiency (points allowed per possession)
 
-**Challenges:** 
-- Requires possession-level data with outcomes (made/missed shots, turnovers)
-- Requires twice as much data per player to estimate two parameters reliably
+This requires possession-level data with outcomes (made/missed shots, turnovers) and doubles the parameters to estimate per player, demanding larger sample sizes. The value is high: identifying elite defenders with limited offense (ideal role players) or high-volume scorers with defensive liabilities (minutes restriction candidates). This decomposition is standard in NBA analytics but underexplored in college basketball research.
 
-**Value:** Identifies specialists (e.g., elite defender with limited offense) for targeted recruitment.
+### Interaction Effects for Lineup Synergy
 
-**3. Interaction Effects for Star Duos**
+The current model assumes player effects combine additively—Player A's impact is the same regardless of who else is on court. Modeling pairwise interactions captures synergy:
 
-Model pairwise interactions for high-usage players:
 $$\Delta WP = \sum_{i} \beta_i + \sum_{i<j} \gamma_{ij} \cdot \mathbb{1}(\text{both } i \text{ and } j \text{ on court})$$
 
-**Example:** If Player A + Player B together consistently outperform $\beta_A + \beta_B$, their $\gamma_{AB}$ captures synergy.
-
-**Computational cost:** High—adds $\binom{n}{2}$ parameters (millions for 10K players). Requires careful sparsity or filtering to top players only.
-
-### Long-Term Research Directions (6-12 months)
-
-**1. Real-Time In-Season Updating Pipeline**
-
-**Goal:** Weekly RAPM rankings updated as new games complete.
-
-**Technical requirements:**
-- Streaming data ingestion from ESPN API
-- Incremental model updates (update coefficients without re-fitting from scratch)
-- Automated validation and monitoring
-
-**Business application:** Provide live rankings to media (ESPN, The Athletic) or betting markets.
-
-**2. Matchup-Specific Opponent Adjustments**
-
-**Idea:** Model how Player A performs specifically against Player B.
-
-**Model:**
-$$\Delta WP_{stint} = \sum_{i \in \text{home}} \beta_i - \sum_{j \in \text{away}} \beta_j + \sum_{i \in \text{home}, j \in \text{away}} \delta_{ij}$$
-
-where $\delta_{ij}$ captures Player i's performance shift when facing Player j.
-
-**Data requirements:** Massive—needs 10,000+ stints per player pair. Only feasible for elite players who face each other repeatedly.
-
-**3. Integration with Tracking Data**
-
-**Vision:** Combine RAPM with player tracking metrics (speed, distance, defensive assignments) to understand *how* players create value.
-
-**Example:** "Player X has +0.08 RAPM, driven by 85th percentile defensive closeout speed and 92nd percentile off-ball movement."
-
-**Barrier:** NCAA tracking data is not widely available (unlike NBA where all teams have cameras).
+If Player A + Player B together consistently outperform $\beta_A + \beta_B$, their interaction term $\gamma_{AB}$ quantifies synergy (positive values) or redundancy (negative values). This is computationally expensive—adds $\binom{n}{2}$ parameters (millions for thousands of players)—but sparsity constraints or filtering to top-100 players makes it tractable. The payoff is identifying optimal lineup combinations, particularly relevant for tournament roster construction where chemistry matters.
 
 ## Conclusion on Limitations
 
