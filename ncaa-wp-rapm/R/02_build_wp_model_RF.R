@@ -97,7 +97,7 @@ pred_gbm_train <- predict(model_gbm, train_data, n.trees = best_iter, type = "re
 pred_gbm_test <- predict(model_gbm, test_data, n.trees = best_iter, type = "response")
 
 
-
+# Model 3: Random Forest (ranger)
 # Prepare data for ranger
 train_rf <- train_data %>%
   select(home_win, all_of(predictors))

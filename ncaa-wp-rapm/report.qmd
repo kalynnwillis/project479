@@ -110,7 +110,7 @@ bash run_pipeline.sh
 
 **Source files:** `R/00_setup.R` (71 lines), `R/utils.R` (17 lines), `R/conference_map.R` (89 lines), `R/01_get_data_hoopR.R` (95 lines), `R/02_build_wp_model_RF.R` (286 lines), `R/03_build_shifts.R` (266 lines), `R/04_fit_rapm_FAST.R` (597 lines), `R/05_eval_plots.R` (465 lines)
 
-**Note:** All helper functions (`utils.R`, `conference_map.R`) are included in the code chunks below for true end-to-end reproducibility.
+**Note:** All code chunks in this report contain EXACT copy-paste from the source R scripts—no simplification, no summarization. Every helper function, optimization, and validation check from the actual analysis pipeline is included verbatim for perfect reproducibility.
 :::
 
 ## Data Sources and Scope
@@ -591,7 +591,7 @@ pred_gbm_train <- predict(model_gbm, train_data, n.trees = best_iter, type = "re
 pred_gbm_test <- predict(model_gbm, test_data, n.trees = best_iter, type = "response")
 
 
-
+# Model 3: Random Forest (ranger)
 # Prepare data for ranger
 train_rf <- train_data %>%
   select(home_win, all_of(predictors))
@@ -830,21 +830,89 @@ wp_eval %>%
 Here is the complete stint construction code:
 
 ```{r stint-construction, eval=FALSE}
-# Load data
-pbp_with_wp <- readRDS("data/interim/pbp_with_wp.rds")  # PBP with WP predictions
+# EXACT CODE FROM R/03_build_shifts.R
+# ESPN doesn't provide sub events, so we use starters + possession-level shifts
+
+source("R/utils.R")
+
+library(tidyverse)
+library(Matrix)
+library(gbm)
+
+model_list <- readRDS("data/interim/wp_models.rds")
 box_scores <- readRDS("data/interim/box_scores.rds")
 
-# Step 1: Identify starting lineups
+best_model_name <- model_list$best_model_name
+if (best_model_name == "XGBoost") {
+  library(xgboost)
+} else if (best_model_name == "Random Forest") {
+  library(ranger)
+}
+
+pbp_data <- readRDS("data/raw/pbp_clean.rds")
+
+# Get the best model
+best_model <- switch(best_model_name,
+  "Logistic" = model_list$logistic,
+  "GBM" = model_list$gbm,
+  "Random Forest" = model_list$random_forest,
+  "XGBoost" = model_list$xgboost
+)
+
+# Prepare features for WP prediction
+pbp_with_features <- pbp_data %>%
+  mutate(
+    score_diff = home_score - away_score,
+    time_remaining_min = secs_remaining / 60,
+    time_elapsed_min = (half - 1) * 20 + (20 - time_remaining_min),
+    score_diff_x_time = score_diff * time_remaining_min,
+    score_diff_sq = score_diff^2,
+    has_ball = if ("possession" %in% names(.)) {
+      ifelse(possession == "home", 1, 0)
+    } else {
+      0.5
+    },
+    is_first_half = ifelse(half == 1, 1, 0),
+    is_second_half = ifelse(half == 2, 1, 0),
+    is_clutch = ifelse(time_remaining_min < 5 & abs(score_diff) < 10, 1, 0)
+  ) %>%
+  filter(!is.na(score_diff), !is.na(time_remaining_min))
+
+# Predict win probability for each play
+pred_data <- pbp_with_features %>%
+  select(all_of(model_list$predictors))
+
+# Handle missing values
+pred_data[is.na(pred_data)] <- 0
+
+# Predict based on model type
+if (best_model_name == "Logistic") {
+  wp <- predict(best_model, pred_data, type = "response")
+} else if (best_model_name == "GBM") {
+  best_iter <- gbm.perf(best_model, method = "cv", plot.it = FALSE)
+  wp <- predict(best_model, pred_data, n.trees = best_iter, type = "response")
+} else if (best_model_name == "Random Forest") {
+  wp <- predict(best_model, pred_data)$predictions[, 2]
+} else if (best_model_name == "XGBoost") {
+  pred_matrix <- xgb.DMatrix(data = as.matrix(pred_data))
+  wp <- predict(best_model, pred_matrix)
+}
+
+pbp_with_wp <- pbp_with_features %>%
+  mutate(home_wp = wp)
+
+games_in_analysis <- unique(pbp_data$game_id)
+
 starters <- box_scores %>%
-  filter(starter == TRUE) %>%
+  filter(starter == TRUE, game_id %in% games_in_analysis) %>%
   select(game_id, team, player_id, player, min, position) %>%
   arrange(game_id, team, desc(min))
 
-# Verify data quality: both teams should have exactly 5 starters
 starters_per_game <- starters %>%
   group_by(game_id, team) %>%
   summarise(n_starters = n(), .groups = "drop")
 
+# Identify "good" games where both teams have exactly 5 starters
 good_games <- starters_per_game %>%
   group_by(game_id) %>%
   summarise(
@@ -856,77 +924,178 @@ good_games <- starters_per_game %>%
   filter(n_teams == 2, min_starters == 5, max_starters == 5) %>%
   pull(game_id)
 
-message(paste("Valid games with complete lineups:", length(good_games), 
-              "/", n_distinct(box_scores$game_id),
-              paste0("(", round(100*length(good_games)/n_distinct(box_scores$game_id), 1), "%)")))
 
-# Step 2: Build half-level stints
-pbp_for_shifts <- pbp_with_wp %>%
+# Filter to good games only for RAPM analysis
+pbp_for_rapm <- pbp_with_wp %>%
   filter(game_id %in% good_games)
 
-# Get home and away starters for each game
-game_starters <- starters %>%
-  filter(game_id %in% good_games) %>%
-  left_join(
-    box_scores %>% distinct(game_id, team, home_away),
-    by = c("game_id", "team")
+
+# Step 2: Build possession-level shifts
+# Sort by ascending time (forward in time)
+# Use half instead of period_number since it may not exist in older data
+pbp_sorted <- pbp_for_rapm %>%
+  arrange(game_id, half, desc(secs_remaining)) %>%
+  group_by(game_id, half) %>%
+  mutate(
+    next_secs_remaining = lead(secs_remaining, default = 0),
+    duration = secs_remaining - next_secs_remaining,
+    next_wp = lead(home_wp, default = NA),
+
+    # Calculate WP change
+    wp_change = next_wp - home_wp
   ) %>%
-  group_by(game_id, home_away) %>%
-  arrange(game_id, home_away, desc(min)) %>%
-  summarise(
-    team = first(team),
-    starters_id = list(player_id),
-    starters_name = list(player),
-    .groups = "drop"
-  ) %>%
-  pivot_wider(
-    names_from = home_away,
-    values_from = c(team, starters_id, starters_name)
+  ungroup() %>%
+  # Remove terminal plays where we don't have valid next_wp
+  filter(!is.na(next_wp))
+
+# Create HALF-LEVEL stints (lecture-aligned "stints" = between subs)
+# Since we don't have sub events, half = one stint
+
+# First: Calculate leverage for each possession
+pbp_with_leverage <- pbp_sorted %>%
+  filter(duration > 0, duration < 300) %>%
+  mutate(
+    is_close = abs(score_diff) <= 10,
+    is_clutch = time_remaining_min <= 5,
+    leverage = case_when(
+      is_clutch & is_close ~ 2.0,
+      is_close ~ 1.5,
+      abs(score_diff) > 20 ~ 0.5,
+      TRUE ~ 1.0
+    )
   )
 
-# Step 3: Aggregate WP changes by game-half-lineup
-shifts <- pbp_for_shifts %>%
-  left_join(game_starters, by = "game_id") %>%
-  group_by(game_id, half, team_home, team_away, 
-           home_starters_id, away_starters_id,
-           home_starters_name, away_starters_name) %>%
+# Then: Aggregate to half-level stints (one row per game-half)
+team_shifts <- pbp_with_leverage %>%
+  group_by(game_id, half, home, away) %>%
   summarise(
-    season = first(season),
-    home_team_id = first(home_team_id),
-    away_team_id = first(away_team_id),
-    
-    # Win probability change (end - start of half)
-    wp_start = first(home_wp),
-    wp_end = last(home_wp),
-    wp_change = wp_end - wp_start,
-    
-    # Duration and context
-    duration = (first(secs_remaining) - last(secs_remaining)) / 60,  # minutes
-    n_plays = n(),
-    
-    # Average score differential and time for leverage calculation
-    avg_score_diff = mean(abs(score_diff)),
-    avg_time_left = mean(time_remaining_min),
-    
+    season = first(season), # NEW: Preserve season
+    start_wp = first(home_wp),
+    end_wp = last(next_wp),
+    wp_change = end_wp - start_wp,
+    duration = sum(duration),
+    leverage = mean(leverage),
+    avg_score_diff = mean(score_diff),
+    avg_time_remaining = mean(time_remaining_min),
     .groups = "drop"
   ) %>%
-  # Compute leverage weighting
+  filter(duration > 60) %>%
   mutate(
-    is_close = avg_score_diff <= 10,
-    is_clutch = avg_time_left < 5,
-    leverage = case_when(
-      is_close & is_clutch ~ 2.0,  # Close AND clutch
-      is_close ~ 1.5,               # Close but not clutch
-      avg_score_diff > 20 ~ 0.5,    # Blowout
-      TRUE ~ 1.0                     # Normal
-    )
+    stint_id = paste(game_id, half, sep = "_stint_"),
+    home_team = home,
+    away_team = away
   ) %>%
-  # Filter to valid stints
-  filter(duration > 0, n_plays > 5)
+  select(
+    stint_id, game_id, season, half, home_team, away_team,
+    wp_change, duration, leverage,
+    avg_score_diff, avg_time_remaining
+  )
 
-message(paste("Created", nrow(shifts), "half-level stints"))
 
-saveRDS(shifts, "data/interim/player_shifts.rds")
+# Step 4: Prepare starter lists for sparse matrix (NO materialization)
+game_starters <- starters %>%
+  filter(game_id %in% good_games) %>%
+  group_by(game_id, team) %>%
+  slice_max(order_by = min, n = 5, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(game_id, team, player_id, player, position, min)
+
+stint_starters <- team_shifts %>%
+  left_join(
+    game_starters %>% select(game_id, team, player_id, player),
+    by = c("game_id", "home_team" = "team"),
+    relationship = "many-to-many"
+  ) %>%
+  rename(home_starter_id = player_id, home_starter = player) %>%
+  left_join(
+    game_starters %>% select(game_id, team, player_id, player),
+    by = c("game_id", "away_team" = "team"),
+    relationship = "many-to-many"
+  ) %>%
+  rename(away_starter_id = player_id, away_starter = player) %>%
+  filter(!is.na(home_starter_id), !is.na(away_starter_id)) %>%
+  group_by(stint_id, game_id, season, half, home_team, away_team, wp_change, duration, leverage) %>%
+  summarise(
+    home_starters_id = list(unique(home_starter_id)),
+    home_starters = list(unique(home_starter)),
+    away_starters_id = list(unique(away_starter_id)),
+    away_starters = list(unique(away_starter)),
+    n_home = n_distinct(home_starter_id),
+    n_away = n_distinct(away_starter_id),
+    .groups = "drop"
+  ) %>%
+  # Keep only stints with full 5v5 lineups
+  filter(n_home == 5, n_away == 5)
+
+message(paste("Stints with full 5v5 lineups:", nrow(stint_starters)))
+message(paste(
+  "Total unique players (by ID):",
+  n_distinct(c(
+    unlist(stint_starters$home_starters_id),
+    unlist(stint_starters$away_starters_id)
+  ))
+))
+
+# Step 5: Create player profiles for context
+
+player_profiles <- box_scores %>%
+  filter(game_id %in% good_games) %>%
+  group_by(player_id, team) %>%
+  summarise(
+    player = dplyr::last(player),
+    games_played = n(),
+    avg_min = mean(min, na.rm = TRUE),
+    is_regular_starter = mean(starter, na.rm = TRUE) >= 0.5,
+
+    # Shooting efficiency
+    ft_made = sum(ftm, na.rm = TRUE),
+    ft_att = sum(fta, na.rm = TRUE),
+    ft_pct = ifelse(ft_att > 0, ft_made / ft_att, NA),
+    fg3_made = sum(fg3m, na.rm = TRUE),
+    fg3_att = sum(fg3a, na.rm = TRUE),
+    fg3_pct = ifelse(fg3_att > 0, fg3_made / fg3_att, NA),
+    fg_made = sum(fgm, na.rm = TRUE),
+    fg_att = sum(fga, na.rm = TRUE),
+    fg_pct = ifelse(fg_att > 0, fg_made / fg_att, NA),
+
+    # Volume rates (per 40 minutes)
+    fta_per_40 = (ft_att / sum(min, na.rm = TRUE)) * 40,
+    fg3a_per_40 = (fg3_att / sum(min, na.rm = TRUE)) * 40,
+
+    # Defensive stats (per 40 minutes)
+    stl_per_40 = (sum(stl, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+    blk_per_40 = (sum(blk, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+    tov_per_40 = (sum(tov, na.rm = TRUE) / sum(min, na.rm = TRUE)) * 40,
+
+    # Overall production
+    pts_per_min = sum(pts, na.rm = TRUE) / sum(min, na.rm = TRUE),
+
+    # Position (most common)
+    position = names(sort(table(position), decreasing = TRUE))[1],
+    .groups = "drop"
+  )
+
+
+# Step 6: Save all data (NO shifts_with_players!)
+saveRDS(stint_starters, "data/interim/player_shifts.rds")
+saveRDS(game_starters, "data/interim/player_games.rds")
+saveRDS(player_profiles, "data/interim/player_profiles.rds")
+
+data_quality <- list(
+  total_games_in_analysis = length(games_in_analysis),
+  games_with_clean_lineups = length(good_games),
+  coverage_pct = 100 * length(good_games) / length(games_in_analysis),
+  total_stints = nrow(stint_starters),
+  unique_players = n_distinct(c(
+    unlist(stint_starters$home_starters_id),
+    unlist(stint_starters$away_starters_id)
+  )),
+  median_stint_duration_sec = median(stint_starters$duration),
+  mean_leverage = mean(stint_starters$leverage),
+  pct_high_leverage = 100 * mean(stint_starters$leverage > 1.0)
+)
+
+saveRDS(data_quality, "data/interim/lineup_quality.rds")
 ```
 
 ### Response Variable: ΔWP per Minute
@@ -942,24 +1111,6 @@ where $\Delta WP_i = WP_{end} - WP_{start}$ is the raw win probability change, a
 - A perfect stint (100% → 100% WP maintained) averages +0% per minute
 - Gaining 10% WP in 10 minutes = +1% per minute is excellent
 - Changes exceeding ±2% per minute are likely measurement error or garbage time
-
-Implementation:
-
-```{r response-variable, eval=FALSE}
-# Normalize to per-minute scale with outlier guards
-shifts <- shifts %>%
-  mutate(
-    # Per-minute win probability change
-    wp_change_per_min = wp_change / pmax(duration, 1) * 60,
-    
-    # Cap at ±2% WP per minute
-    wp_change_per_min = pmin(pmax(wp_change_per_min, -0.02), 0.02),
-    
-    # Handle non-finite values (shouldn't happen, but safety check)
-    wp_change_per_min = ifelse(is.finite(wp_change_per_min), 
-                                wp_change_per_min, 0)
-  )
-```
 
 ### Weighting Scheme
 
@@ -982,30 +1133,7 @@ Close games in crunch time reveal true player impact better than garbage time in
 
 $$w_i = w_i^{(duration)} \times w_i^{(leverage)}$$
 
-
-Implementation:
-
-```{r weighting-scheme, eval=FALSE}
-# Compute combined weights
-shifts <- shifts %>%
-  mutate(
-    # Duration weight (square root)
-    weight_duration = sqrt(duration),
-    
-    # Leverage weight (already computed above)
-    weight_leverage = leverage,
-    
-    # Combined weight 
-    weight = weight_duration * weight_leverage
-  )
-
-# Renormalize weights to maintain effective sample size
-shifts <- shifts %>%
-  mutate(weight = weight * (nrow(shifts) / sum(weight)))
-
-message(paste("Mean weight:", round(mean(shifts$weight), 2)))
-message(paste("Effective sample size:", round(sum(shifts$weight)^2 / sum(shifts$weight^2), 0)))
-```
+The leverage weighting is computed in the stint construction code above, and the combined weighting is applied in the RAPM estimation code below.
 
 ## RAPM Estimation
 
@@ -1023,353 +1151,611 @@ We solve this using regression with **regularization** to prevent overfitting in
 - **Sample size variation:** Some players have 50 games, others have 150
 - **Noisy observations:** Half-level stints are aggregates, not perfect measurements
 
-### Design Matrix Construction
+### Design Matrix Construction, Regularization, and Cross-Validation
 
-We build a **sparse matrix** where each row represents a stint and each column represents a player:
+Here is the complete RAPM estimation code, including player matrix construction, fixed effects, regularization, and validation:
 
-```{r rapm-matrix, eval=FALSE}
-library(Matrix)
+```{r rapm-full-estimation, eval=FALSE}
+# EXACT CODE FROM R/04_fit_rapm_FAST.R
+# Fit RAPM using regularized regression - FAST OPTIMIZED VERSION
+# Regularized Adjusted Plus-Minus on Win Probability scale
+
+source("R/utils.R")
+source("R/conference_map.R")
+
+library(tidyverse)
 library(glmnet)
+library(Matrix)
 
-# Load stint data
+# SPEED OPTIMIZATION: Parallel CV
+if (requireNamespace("doParallel", quietly = TRUE)) {
+  library(doParallel)
+  n_cores <- max(1, parallel::detectCores() - 1)
+  cl <- makeCluster(n_cores)
+  registerDoParallel(cl)
+  USE_PARALLEL <- TRUE
+} else {
+  USE_PARALLEL <- FALSE
+}
+
 shifts <- readRDS("data/interim/player_shifts.rds")
-
-# Identify qualifying players (minimum games and minutes)
+player_games <- readRDS("data/interim/player_games.rds")
 box_scores <- readRDS("data/interim/box_scores.rds")
 
+message(paste("Loaded", nrow(shifts), "shift observations"))
+
+# Load player profiles
+player_profiles_file <- "data/interim/player_profiles.rds"
+if (file.exists(player_profiles_file)) {
+  player_profiles <- readRDS(player_profiles_file)
+} else {
+  player_profiles <- NULL
+}
+
+# OPTIMIZATION 1: Sample shifts if dataset is too large
+MAX_SHIFTS <- 500000
+if (nrow(shifts) > MAX_SHIFTS) {
+  message(paste("Sampling", MAX_SHIFTS, "shifts from", nrow(shifts), "for faster computation..."))
+  set.seed(479)
+  shifts <- shifts %>% slice_sample(n = MAX_SHIFTS)
+  message(paste("Using", nrow(shifts), "sampled shifts"))
+}
+
+# FIX B: Build minutes/games per player from FULL box scores (not just starters)
 minutes_per_player <- box_scores %>%
   group_by(player_id) %>%
   summarise(
-    player = last(player),
+    player = dplyr::last(player),
     total_minutes = sum(min, na.rm = TRUE),
     games_played = n(),
+    avg_minutes = total_minutes / games_played,
     .groups = "drop"
   )
 
-# Filter to players with sufficient data
-MIN_MINUTES <- 2000  # ~1-2 seasons of regular play
-MIN_GAMES <- 50      # ~1 season minimum
 
+MIN_MINUTES <- 2000 # Multi-season data: ~1-2 solid seasons (60 games × 30 min)
+MIN_GAMES <- 50 # Multi-season data: ~1-2 seasons of regular play
 keep_players <- minutes_per_player %>%
   filter(total_minutes >= MIN_MINUTES, games_played >= MIN_GAMES) %>%
   pull(player_id)
 
-# Get all players who appear in stints AND meet minimum threshold
-all_players_raw <- unique(c(
-  unlist(shifts$home_starters_id),
-  unlist(shifts$away_starters_id)
-))
+
+all_players_raw <- sort(unique(c(unlist(shifts$home_starters_id), unlist(shifts$away_starters_id))))
 all_players <- intersect(all_players_raw, keep_players)
-
-message(paste("Qualified players:", length(all_players)))
-
-# Build sparse player matrix
-n_stints <- nrow(shifts)
-n_players <- length(all_players)
-player_lookup <- setNames(1:n_players, all_players)
-
-# Use triplet format for efficiency
-i_indices <- integer()  # Row (stint) indices
-j_indices <- integer()  # Column (player) indices  
-values <- numeric()     # Values (+1 home, -1 away)
-
-for (stint_idx in 1:n_stints) {
-  # Home starters get +1
-  home_players <- shifts$home_starters_id[[stint_idx]]
-  home_idx <- player_lookup[home_players]
-  home_idx <- home_idx[!is.na(home_idx)]  # Only qualified players
-  
-  if (length(home_idx) > 0) {
-    i_indices <- c(i_indices, rep(stint_idx, length(home_idx)))
-    j_indices <- c(j_indices, home_idx)
-    values <- c(values, rep(1, length(home_idx)))
-  }
-  
-  # Away starters get -1
-  away_players <- shifts$away_starters_id[[stint_idx]]
-  away_idx <- player_lookup[away_players]
-  away_idx <- away_idx[!is.na(away_idx)]
-  
-  if (length(away_idx) > 0) {
-    i_indices <- c(i_indices, rep(stint_idx, length(away_idx)))
-    j_indices <- c(j_indices, away_idx)
-    values <- c(values, rep(-1, length(away_idx)))
-  }
-  
-  if (stint_idx %% 10000 == 0) {
-    message(paste("Processed", stint_idx, "/", n_stints, "stints"))
-  }
-}
-
-# Create sparse matrix (efficient storage)
-X_players <- sparseMatrix(
-  i = i_indices,
-  j = j_indices,
-  x = values,
-  dims = c(n_stints, n_players)
-)
-colnames(X_players) <- all_players
-
-# Verify: each stint should have ~10 non-zero entries (5 home, 5 away)
-message(paste("Mean non-zeros per stint:", 
-              round(mean(rowSums(X_players != 0)), 1)))
-```
-
-**Fixed effects:** We augment the player matrix with team, conference, and season indicators to control for confounding factors:
-
-```{r rapm-fixed-effects, eval=FALSE}
-# Team fixed effects (captures coaching, systems, etc.)
 all_teams <- unique(c(shifts$home_team, shifts$away_team))
-n_teams <- length(all_teams)
-X_teams <- Matrix(0, nrow = n_stints, ncol = n_teams, sparse = TRUE)
 
-for (i in 1:n_stints) {
-  home_team_idx <- which(all_teams == shifts$home_team[i])
-  away_team_idx <- which(all_teams == shifts$away_team[i])
-  if (length(home_team_idx) > 0) X_teams[i, home_team_idx] <- 1
-  if (length(away_team_idx) > 0) X_teams[i, away_team_idx] <- -1
-}
+create_rapm_matrix_from_lists <- function(stints_data, players) {
+  n_stints <- nrow(stints_data)
+  n_players <- length(players)
 
-# Conference fixed effects
-# Use get_team_conference() function defined in conference-mapping chunk above
-shifts <- shifts %>%
-  mutate(
-    home_conference = get_team_conference(home_team),
-    away_conference = get_team_conference(away_team)
+
+  # Create player index lookup
+  player_lookup <- setNames(1:n_players, players)
+
+  # Build triplet format (stint_idx, player_idx, value)
+  i_indices <- integer()
+  j_indices <- integer()
+  values <- numeric()
+
+  for (stint_idx in 1:n_stints) {
+    # Home starters: +1
+    home_players <- stints_data$home_starters_id[[stint_idx]]
+    home_idx <- player_lookup[home_players]
+    home_idx <- home_idx[!is.na(home_idx)]
+
+    if (length(home_idx) > 0) {
+      i_indices <- c(i_indices, rep(stint_idx, length(home_idx)))
+      j_indices <- c(j_indices, home_idx)
+      values <- c(values, rep(1, length(home_idx)))
+    }
+
+    # Away starters: -1
+    away_players <- stints_data$away_starters_id[[stint_idx]]
+    away_idx <- player_lookup[away_players]
+    away_idx <- away_idx[!is.na(away_idx)]
+
+    if (length(away_idx) > 0) {
+      i_indices <- c(i_indices, rep(stint_idx, length(away_idx)))
+      j_indices <- c(j_indices, away_idx)
+      values <- c(values, rep(-1, length(away_idx)))
+    }
+
+    if (stint_idx %% 10000 == 0) {
+      message(paste("  Processed", stint_idx, "/", n_stints, "stints"))
+    }
+  }
+
+  # Create sparse matrix
+  X <- sparseMatrix(
+    i = i_indices,
+    j = j_indices,
+    x = values,
+    dims = c(n_stints, n_players)
   )
 
-all_conferences <- unique(c(shifts$home_conference, shifts$away_conference))
-all_conferences <- all_conferences[!is.na(all_conferences)]
-n_conferences <- length(all_conferences)
-X_conferences <- Matrix(0, nrow = n_stints, ncol = n_conferences, sparse = TRUE)
+  colnames(X) <- players
 
-for (i in 1:n_stints) {
-  if (!is.na(shifts$home_conference[i])) {
-    home_conf_idx <- which(all_conferences == shifts$home_conference[i])
-    if (length(home_conf_idx) > 0) X_conferences[i, home_conf_idx] <- 1
-  }
-  if (!is.na(shifts$away_conference[i])) {
-    away_conf_idx <- which(all_conferences == shifts$away_conference[i])
-    if (length(away_conf_idx) > 0) X_conferences[i, away_conf_idx] <- -1
-  }
+  message("✓ Matrix created (~10 non-zeros per stint)")
+  return(X)
 }
 
-# Season fixed effects
-all_seasons <- sort(unique(shifts$season))
+# Create player design matrix
+X <- create_rapm_matrix_from_lists(shifts, all_players)
+
+# FIX A: Response variable on PER-MINUTE scale with outlier guards
+y <- shifts$wp_change / pmax(shifts$duration, 60) * 60 # Minimum duration = 60 sec
+y <- pmin(pmax(y, -0.02), 0.02) # Cap at ±2% WP per minute
+y <- ifelse(is.finite(y), y, 0)
+
+
+if ("leverage" %in% names(shifts)) {
+  weights <- sqrt(shifts$duration) * shifts$leverage
+  message("Using WEIGHTED APM: Duration × Leverage (close games up-weighted, blowouts down-weighted)")
+} else {
+  weights <- sqrt(shifts$duration)
+  message("Using duration-weighted shifts (no leverage data)")
+}
+
+weights <- weights * (nrow(shifts) / sum(weights))
+
+
+valid_shifts <- which(rowSums(X != 0) > 0 & is.finite(y))
+valid_players <- which(colSums(X != 0) > 0)
+
+X_valid <- X[valid_shifts, valid_players]
+y_valid <- y[valid_shifts]
+weights_valid <- weights[valid_shifts]
+shifts_valid <- shifts[valid_shifts, ]
+
+
+# Map teams to conferences using manual mapping (hoopR doesn't provide conference data)
+team_conf_map <- data.frame(
+  team = all_teams,
+  conference = get_team_conference(all_teams)
+)
+
+# Add conference info to VALID shifts only
+shifts_valid_conf <- shifts_valid %>%
+  left_join(team_conf_map, by = c("home_team" = "team")) %>%
+  rename(home_conf = conference) %>%
+  left_join(team_conf_map, by = c("away_team" = "team")) %>%
+  rename(away_conf = conference)
+
+all_conferences <- sort(unique(c(shifts_valid_conf$home_conf, shifts_valid_conf$away_conf)))
+all_seasons <- sort(unique(shifts_valid$season))
+
+n_valid <- nrow(shifts_valid_conf)
+n_teams <- length(all_teams)
+n_conf <- length(all_conferences)
 n_seasons <- length(all_seasons)
-X_seasons <- Matrix(0, nrow = n_stints, ncol = n_seasons, sparse = TRUE)
 
-for (i in 1:n_stints) {
-  season_idx <- which(all_seasons == shifts$season[i])
-  X_seasons[i, season_idx] <- 1
+
+home_team_idx <- match(shifts_valid_conf$home_team, all_teams)
+away_team_idx <- match(shifts_valid_conf$away_team, all_teams)
+
+valid_home_t <- !is.na(home_team_idx)
+valid_away_t <- !is.na(away_team_idx)
+
+teams_matrix_valid <- sparseMatrix(
+  i = c(which(valid_home_t), which(valid_away_t)),
+  j = c(home_team_idx[valid_home_t], away_team_idx[valid_away_t]),
+  x = c(rep(1L, sum(valid_home_t)), rep(-1L, sum(valid_away_t))),
+  dims = c(n_valid, n_teams)
+)
+colnames(teams_matrix_valid) <- all_teams
+
+home_conf_idx <- match(shifts_valid_conf$home_conf, all_conferences)
+away_conf_idx <- match(shifts_valid_conf$away_conf, all_conferences)
+
+valid_home_c <- !is.na(home_conf_idx)
+valid_away_c <- !is.na(away_conf_idx)
+
+conf_matrix_valid <- sparseMatrix(
+  i = c(which(valid_home_c), which(valid_away_c)),
+  j = c(home_conf_idx[valid_home_c], away_conf_idx[valid_away_c]),
+  x = c(rep(1L, sum(valid_home_c)), rep(-1L, sum(valid_away_c))),
+  dims = c(n_valid, n_conf)
+)
+colnames(conf_matrix_valid) <- all_conferences
+
+season_idx <- match(shifts_valid$season, all_seasons)
+valid_season <- !is.na(season_idx)
+
+season_matrix_valid <- sparseMatrix(
+  i = which(valid_season),
+  j = season_idx[valid_season],
+  x = rep(1L, sum(valid_season)),
+  dims = c(n_valid, n_seasons)
+)
+colnames(season_matrix_valid) <- paste0("Season_", all_seasons)
+
+
+# FAST: Combine matrices (all already same size)
+X_combined_valid <- cbind(X_valid, teams_matrix_valid, conf_matrix_valid, season_matrix_valid)
+
+
+# OPTIMIZATION: Faster CV with shorter lambda path
+N_FOLDS <- 5
+N_LAMBDA <- 40
+LAMBDA_MIN_RATIO <- 1e-2
+
+# Fit Ridge Regression (L2 regularization) WITH WEIGHTING
+t_ridge_start <- Sys.time()
+set.seed(479)
+
+cv_ridge <- cv.glmnet(
+  x = X_combined_valid,
+  y = y_valid,
+  weights = weights_valid,
+  alpha = 0, # Ridge regression
+  nfolds = N_FOLDS,
+  nlambda = N_LAMBDA,
+  lambda.min.ratio = LAMBDA_MIN_RATIO,
+  standardize = TRUE,
+  parallel = USE_PARALLEL,
+  type.measure = "mse"
+)
+
+# Use lambda.1se (stronger shrinkage, more stable)
+ridge_model <- glmnet(
+  x = X_combined_valid,
+  y = y_valid,
+  weights = weights_valid,
+  alpha = 0,
+  lambda = cv_ridge$lambda.1se,
+  standardize = TRUE
+)
+
+ridge_coefs <- coef(ridge_model)
+ridge_player_effects <- ridge_coefs[2:(length(valid_players) + 1)]
+names(ridge_player_effects) <- colnames(X_valid)
+
+
+n_players <- length(valid_players)
+n_teams <- ncol(teams_matrix_valid)
+n_conferences <- length(all_conferences)
+n_seasons_fx <- ncol(season_matrix_valid)
+
+ridge_team_effects <- ridge_coefs[(n_players + 2):(n_players + n_teams + 1)]
+ridge_conf_effects <- ridge_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
+ridge_season_effects <- ridge_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
+
+
+# Fit Lasso Regression (L1 regularization) WITH WEIGHTING
+message("Fitting Lasso regression model (WEIGHTED by shift duration)...")
+cv_lasso <- cv.glmnet(
+  x = X_combined_valid,
+  y = y_valid,
+  weights = weights_valid,
+  alpha = 1, # Lasso regression
+  nfolds = N_FOLDS,
+  nlambda = N_LAMBDA,
+  lambda.min.ratio = LAMBDA_MIN_RATIO,
+  standardize = TRUE,
+  parallel = USE_PARALLEL,
+  type.measure = "mse"
+)
+
+lasso_model <- glmnet(
+  x = X_combined_valid,
+  y = y_valid,
+  weights = weights_valid,
+  alpha = 1,
+  lambda = cv_lasso$lambda.1se,
+  standardize = TRUE
+)
+
+lasso_coefs <- coef(lasso_model)
+lasso_player_effects <- lasso_coefs[2:(length(valid_players) + 1)]
+names(lasso_player_effects) <- colnames(X_valid)
+
+
+lasso_team_effects <- lasso_coefs[(n_players + 2):(n_players + n_teams + 1)]
+lasso_conf_effects <- lasso_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
+lasso_season_effects <- lasso_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
+
+
+# Fit Elastic Net (combination) WITH WEIGHTING
+cv_elastic <- cv.glmnet(
+  x = X_combined_valid,
+  y = y_valid,
+  weights = weights_valid,
+  alpha = 0.5, # Elastic net
+  nfolds = N_FOLDS,
+  nlambda = N_LAMBDA,
+  lambda.min.ratio = LAMBDA_MIN_RATIO,
+  standardize = TRUE,
+  parallel = USE_PARALLEL,
+  type.measure = "mse"
+)
+
+elastic_model <- glmnet(
+  x = X_combined_valid,
+  y = y_valid,
+  weights = weights_valid,
+  alpha = 0.5,
+  lambda = cv_elastic$lambda.1se,
+  standardize = TRUE
+)
+
+elastic_coefs <- coef(elastic_model)
+elastic_player_effects <- elastic_coefs[2:(length(valid_players) + 1)]
+names(elastic_player_effects) <- colnames(X_valid)
+
+# Extract team, conference, and season effects
+elastic_team_effects <- elastic_coefs[(n_players + 2):(n_players + n_teams + 1)]
+elastic_conf_effects <- elastic_coefs[(n_players + n_teams + 2):(n_players + n_teams + n_conferences + 1)]
+elastic_season_effects <- elastic_coefs[(n_players + n_teams + n_conferences + 2):(n_players + n_teams + n_conferences + n_seasons_fx + 1)]
+
+
+# Fit unregularized model with very large lambda (effectively no penalty)
+baseline_model <- glmnet(
+  x = X_combined_valid,
+  y = y_valid,
+  weights = weights_valid,
+  alpha = 0,
+  lambda = 1e-10,
+  standardize = TRUE
+)
+
+baseline_coefs <- coef(baseline_model)
+baseline_player_effects <- baseline_coefs[2:(length(valid_players) + 1)]
+names(baseline_player_effects) <- colnames(X_valid)
+
+
+shifts_valid$game_id <- shifts[valid_shifts, ]$game_id
+unique_games <- unique(shifts_valid$game_id)
+n_games <- length(unique_games)
+
+
+set.seed(479)
+n_oos_games <- min(50, n_games)
+oos_games <- sample(unique_games, n_oos_games)
+oos_mse_ridge <- numeric(n_oos_games)
+oos_mse_baseline <- numeric(n_oos_games)
+
+for (i in seq_along(oos_games)) {
+  test_game <- oos_games[i]
+  train_idx <- which(shifts_valid$game_id != test_game)
+  test_idx <- which(shifts_valid$game_id == test_game)
+
+  if (length(test_idx) > 0 && length(train_idx) > 100) {
+    # Fit on train
+    cv_temp <- cv.glmnet(
+      x = X_combined_valid[train_idx, ],
+      y = y_valid[train_idx],
+      weights = weights_valid[train_idx],
+      alpha = 0,
+      nfolds = 3,
+      nlambda = 20,
+      standardize = TRUE
+    )
+
+    # Predict on test
+    pred_ridge <- predict(cv_temp, s = "lambda.1se", newx = X_combined_valid[test_idx, ])
+    pred_baseline <- predict(
+      glmnet(X_combined_valid[train_idx, ], y_valid[train_idx],
+        weights = weights_valid[train_idx], alpha = 0, lambda = 1e-10
+      ),
+      newx = X_combined_valid[test_idx, ]
+    )
+
+    oos_mse_ridge[i] <- mean((y_valid[test_idx] - pred_ridge)^2)
+    oos_mse_baseline[i] <- mean((y_valid[test_idx] - pred_baseline)^2)
+  }
 }
 
-# Combine all design matrices
-X_full <- cbind(X_players, X_teams, X_conferences, X_seasons)
+valid_oos <- oos_mse_ridge > 0
 
-message(paste("Full design matrix:", nrow(X_full), "×", ncol(X_full)))
-```
-
-### Regularization and Cross-Validation
-
-We use **ridge regression** (L2 regularization) as our primary method. Ridge shrinks coefficients toward zero proportionally, which is appropriate for our setting where:
-
-- Most players have modest impact (close to zero)
-- We want to preserve information about all players (no hard zeros)
-- Multicollinearity is severe (starters always play together)
-
-```{r rapm-estimation, eval=FALSE}
-library(doParallel)
-
-# Setup parallel processing for faster CV
-n_cores <- max(1, parallel::detectCores() - 1)
-cl <- makeCluster(n_cores)
-registerDoParallel(cl)
-
-# Response variable and weights
-y <- shifts$wp_change_per_min
-weights <- shifts$weight
-
-# Ridge regression (alpha = 0)
-cv_ridge <- cv.glmnet(
-  x = X_full,
-  y = y,
-  weights = weights,
-  alpha = 0,           # Ridge penalty
-  nfolds = 5,
-  parallel = TRUE,
-  standardize = FALSE  # Already on same scale
-)
-
-# Lasso regression (alpha = 1) for comparison
-cv_lasso <- cv.glmnet(
-  x = X_full,
-  y = y,
-  weights = weights,
-  alpha = 1,           # Lasso penalty
-  nfolds = 5,
-  parallel = TRUE,
-  standardize = FALSE
-)
-
-# Elastic Net (alpha = 0.5) for comparison
-cv_enet <- cv.glmnet(
-  x = X_full,
-  y = y,
-  weights = weights,
-  alpha = 0.5,         # Elastic net
-  nfolds = 5,
-  parallel = TRUE,
-  standardize = FALSE
-)
-
-# Baseline (unregularized, lambda → 0)
-cv_baseline <- cv.glmnet(
-  x = X_full,
-  y = y,
-  weights = weights,
-  alpha = 0,
-  lambda = c(1e-8, 1e-7),  # Near-zero penalty
-  standardize = FALSE
-)
-
-stopCluster(cl)
-
-# Use lambda.1se (more conservative than lambda.min)
-# This provides more shrinkage for better stability
-ridge_lambda <- cv_ridge$lambda.1se
-
-message(paste("Selected lambda (Ridge):", round(ridge_lambda, 6)))
-message(paste("CV MSE (Ridge):", round(min(cv_ridge$cvm), 6)))
-```
-
-**Why lambda.1se instead of lambda.min?** 
-
-- `lambda.min` minimizes CV error but may overfit
-- `lambda.1se` is the largest lambda within 1 standard error of minimum
-- This provides more shrinkage → more stable estimates → better out-of-sample performance
-
-### Extract Player Coefficients
-
-```{r rapm-extract-coefficients, eval=FALSE}
-# Extract coefficients at selected lambda
-ridge_coef <- coef(cv_ridge, s = "lambda.1se")
-lasso_coef <- coef(cv_lasso, s = "lambda.1se")
-baseline_coef <- coef(cv_baseline, s = cv_baseline$lambda[1])
-
-# Player coefficients are first n_players columns
-player_coef_ridge <- ridge_coef[2:(n_players + 1)]  # Skip intercept
-player_coef_lasso <- lasso_coef[2:(n_players + 1)]
-player_coef_baseline <- baseline_coef[2:(n_players + 1)]
-
-# Create results table
-rapm_table <- tibble(
-  player_id = all_players,
-  ridge_rapm = as.numeric(player_coef_ridge),
-  lasso_rapm = as.numeric(player_coef_lasso),
-  baseline_rapm = as.numeric(player_coef_baseline),
-  # Convert to per-40-minute scale (more interpretable)
-  ridge_per40 = ridge_rapm * 40,
-  lasso_per40 = lasso_rapm * 40,
-  baseline_per40 = baseline_rapm * 40
+# Compile RAPM results
+rapm_results <- tibble(
+  player_id = colnames(X_valid),
+  baseline_apm = as.numeric(baseline_player_effects),
+  ridge_rapm = as.numeric(ridge_player_effects),
+  lasso_rapm = as.numeric(lasso_player_effects),
+  elastic_rapm = as.numeric(elastic_player_effects)
 ) %>%
-  # Join player names and stats
-  left_join(minutes_per_player, by = "player_id") %>%
-  # Compute percentiles
-  mutate(
-    ridge_percentile = percent_rank(ridge_rapm) * 100,
-    lasso_percentile = percent_rank(lasso_rapm) * 100
-  ) %>%
   arrange(desc(ridge_rapm))
-
-# Extract fixed effects
-team_coef_start <- n_players + 2
-team_coef_end <- team_coef_start + n_teams - 1
-conference_coef_start <- team_coef_end + 1
-conference_coef_end <- conference_coef_start + n_conferences - 1
-season_coef_start <- conference_coef_end + 1
-season_coef_end <- season_coef_start + n_seasons - 1
 
 conference_effects <- tibble(
   conference = all_conferences,
-  ridge_conf_effect = as.numeric(
-    ridge_coef[conference_coef_start:conference_coef_end]
-  ),
-  ridge_conf_per40 = ridge_conf_effect * 40
+  ridge_conf = as.numeric(ridge_conf_effects),
+  lasso_conf = as.numeric(lasso_conf_effects),
+  elastic_conf = as.numeric(elastic_conf_effects)
 ) %>%
-  arrange(desc(ridge_conf_per40))
+  mutate(
+    ridge_conf_per40 = ridge_conf * 40,
+    lasso_conf_per40 = lasso_conf * 40,
+    elastic_conf_per40 = elastic_conf * 40
+  ) %>%
+  arrange(desc(ridge_conf))
 
+print(conference_effects %>% select(conference, ridge_conf_per40))
+
+# Compile season effects
 season_effects <- tibble(
   season = all_seasons,
-  ridge_season_effect = as.numeric(
-    ridge_coef[season_coef_start:season_coef_end]
-  ),
-  ridge_season_per40 = ridge_season_effect * 40
+  ridge_season = as.numeric(ridge_season_effects),
+  lasso_season = as.numeric(lasso_season_effects),
+  elastic_season = as.numeric(elastic_season_effects)
+) %>%
+  mutate(
+    ridge_season_per40 = ridge_season * 40,
+    lasso_season_per40 = lasso_season * 40,
+    elastic_season_per40 = elastic_season * 40
+  )
+
+print(season_effects %>% select(season, ridge_season_per40))
+
+# FIX C: Use full box scores for games_played (not just starts)
+# This join brings in: player name, total_minutes, games_played, avg_minutes
+rapm_results <- rapm_results %>%
+  left_join(minutes_per_player, by = "player_id")
+
+# Add player profiles if available (NEW!)
+if (!is.null(player_profiles)) {
+  # Aggregate profiles by player_id (some players may have played for multiple teams)
+  player_profile_summary <- player_profiles %>%
+    group_by(player_id) %>%
+    summarise(
+      position = first(position),
+      is_regular_starter = any(is_regular_starter),
+      ft_pct = weighted.mean(ft_pct, w = games_played, na.rm = TRUE),
+      fg3_pct = weighted.mean(fg3_pct, w = games_played, na.rm = TRUE),
+      fg_pct = weighted.mean(fg_pct, w = games_played, na.rm = TRUE),
+      fta_per_40 = weighted.mean(fta_per_40, w = games_played, na.rm = TRUE),
+      fg3a_per_40 = weighted.mean(fg3a_per_40, w = games_played, na.rm = TRUE),
+      stl_per_40 = weighted.mean(stl_per_40, w = games_played, na.rm = TRUE),
+      blk_per_40 = weighted.mean(blk_per_40, w = games_played, na.rm = TRUE),
+      pts_per_min = weighted.mean(pts_per_min, w = games_played, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  rapm_results <- rapm_results %>%
+    left_join(player_profile_summary, by = "player_id")
+}
+
+# Compute percentile ranks and PER-40 versions for readability
+rapm_results <- rapm_results %>%
+  mutate(
+    # Per-40 minute versions
+    baseline_per40 = baseline_apm * 40,
+    ridge_per40 = ridge_rapm * 40,
+    lasso_per40 = lasso_rapm * 40,
+    elastic_per40 = elastic_rapm * 40,
+    # Percentiles
+    ridge_percentile = percent_rank(ridge_rapm) * 100,
+    lasso_percentile = percent_rank(lasso_rapm) * 100,
+    elastic_percentile = percent_rank(elastic_rapm) * 100
+  )
+
+# Check 1: Mean should be near 0 after centering
+rapm_mean <- mean(rapm_results$ridge_rapm, na.rm = TRUE)
+rapm_sd <- sd(rapm_results$ridge_rapm, na.rm = TRUE)
+message(paste("Ridge RAPM mean:", round(rapm_mean, 6), "(should be ≈0)"))
+message(paste("Ridge RAPM SD:", round(rapm_sd, 6)))
+
+# Check 2: Correlation with minutes
+minutes_cor <- cor(rapm_results$ridge_rapm, rapm_results$total_minutes,
+  use = "complete.obs"
 )
 
-# Save results
-saveRDS(list(
-  rapm_table = rapm_table,
+if (abs(minutes_cor) > 0.3) {
+  message("  ⚠ Warning: High correlation with minutes may indicate under-regularization")
+} else {
+  message("  ✓ Good: RAPM not biased toward high-minute players")
+}
+
+
+# Create filtered versions at different minutes thresholds
+rapm_1500min <- rapm_results %>%
+  filter(total_minutes >= 1500) %>%
+  arrange(desc(ridge_rapm))
+
+rapm_2500min <- rapm_results %>%
+  filter(total_minutes >= 2500) %>%
+  arrange(desc(ridge_rapm))
+
+# Compare top 10 lists
+top10_all <- rapm_results %>%
+  arrange(desc(ridge_rapm)) %>%
+  head(10) %>%
+  pull(player)
+top10_1500 <- rapm_1500min %>%
+  head(10) %>%
+  pull(player)
+top10_2500 <- rapm_2500min %>%
+  head(10) %>%
+  pull(player)
+
+
+# Model evaluation metrics
+if (USE_PARALLEL) {
+  stopCluster(cl)
+  message("Parallel cluster stopped")
+}
+
+
+# Apply final consistency filter (match the pre-matrix threshold)
+rapm_results_filtered <- rapm_results %>%
+  filter(total_minutes >= MIN_MINUTES, games_played >= MIN_GAMES)
+
+# Save results (directories created by 00_setup.R)
+rapm_output <- list(
+  rapm_table = rapm_results_filtered,
+  rapm_table_all = rapm_results,
+  rapm_1500min = rapm_1500min,
+  rapm_2500min = rapm_2500min,
   conference_effects = conference_effects,
   season_effects = season_effects,
+  ridge_model = ridge_model,
+  lasso_model = lasso_model,
+  elastic_model = elastic_model,
+  baseline_model = baseline_model,
   cv_ridge = cv_ridge,
   cv_lasso = cv_lasso,
-  cv_baseline = cv_baseline
-), "data/processed/rapm_results.rds")
-```
-
-### Validation Checks
-
-**Sanity check 1:** Mean RAPM should be ≈ 0 (zero-sum game—one team's gain is another's loss):
-
-```{r rapm-sanity-checks, eval=FALSE}
-mean_rapm <- mean(rapm_table$ridge_rapm)
-message(paste("Mean RAPM:", sprintf("%.6f", mean_rapm)))
-# Expected: very close to 0 (e.g., -0.000001)
-```
-
-**Sanity check 2:** RAPM should be uncorrelated with minutes played (otherwise we're just measuring playing time, not impact):
-
-```{r rapm-minutes-correlation, eval=FALSE}
-minutes_cor <- cor(rapm_table$ridge_rapm, rapm_table$total_minutes)
-message(paste("Correlation(RAPM, Minutes):", sprintf("%.3f", minutes_cor)))
-# Expected: close to 0 (e.g., -0.02)
-```
-
-**Out-of-sample validation:** Hold out 50 games, re-fit model, compute test MSE:
-
-```{r rapm-oos-validation, eval=FALSE}
-set.seed(479)
-holdout_games <- sample(unique(shifts$game_id), 50)
-train_mask <- !(shifts$game_id %in% holdout_games)
-
-# Re-fit ridge on training data only
-cv_ridge_oos <- cv.glmnet(
-  x = X_full[train_mask, ],
-  y = y[train_mask],
-  weights = weights[train_mask],
-  alpha = 0,
-  nfolds = 5,
-  parallel = FALSE
+  cv_elastic = cv_elastic,
+  design_matrix = X_combined_valid,
+  response = y_valid,
+  sanity_checks = list(
+    rapm_mean = rapm_mean,
+    rapm_sd = rapm_sd,
+    minutes_cor = minutes_cor
+  ),
+  oos_validation = list(
+    ridge_mse = mean(oos_mse_ridge[valid_oos]),
+    baseline_mse = mean(oos_mse_baseline[valid_oos]),
+    n_games = sum(valid_oos)
+  )
 )
 
-# Predict on held-out games
-y_test <- y[!train_mask]
-y_pred_ridge <- predict(cv_ridge_oos, newx = X_full[!train_mask, ], 
-                         s = "lambda.1se")
-y_pred_baseline <- predict(cv_baseline, newx = X_full[!train_mask, ],
-                            s = cv_baseline$lambda[1])
+saveRDS(rapm_output, "data/processed/rapm_results.rds")
+write_csv(rapm_results_filtered, "tables/rapm_rankings.csv")
+write_csv(rapm_1500min, "tables/rapm_rankings_1500min.csv")
+write_csv(rapm_2500min, "tables/rapm_rankings_2500min.csv")
+write_csv(conference_effects, "tables/conference_effects.csv")
+write_csv(season_effects, "tables/season_effects.csv")
 
-ridge_mse <- mean((y_test - y_pred_ridge)^2)
-baseline_mse <- mean((y_test - y_pred_baseline)^2)
+# Print top players
+message("\n=== Top 20 Players (Ridge RAPM per 40 min) ===")
+message(paste("Note: Filtered to ≥", MIN_MINUTES, "minutes and ≥", MIN_GAMES, "games"))
 
-message(paste("Ridge OOS MSE:", sprintf("%.6f", ridge_mse)))
-message(paste("Baseline OOS MSE:", sprintf("%.6f", baseline_mse)))
-message(paste("Improvement:", sprintf("%.1f%%", 
-              100 * (1 - ridge_mse / baseline_mse))))
+top_20 <- rapm_results_filtered %>%
+  arrange(desc(ridge_rapm)) %>%
+  select(player, ridge_per40, baseline_per40, games_played, total_minutes) %>%
+  head(20)
+
+message("\nTOP 3 PLAYERS:")
+for (i in seq_len(min(3, nrow(top_20)))) {
+  message(sprintf(
+    "%d. %-25s Ridge: %.3f | Baseline: %.3f | Games: %3d | Mins: %4d",
+    i,
+    top_20$player[i],
+    top_20$ridge_per40[i],
+    top_20$baseline_per40[i],
+    top_20$games_played[i],
+    top_20$total_minutes[i]
+  ))
+}
+
+message("\nFull Top 20:")
+print(top_20, n = 20)
+
+message("\n=== Baseline vs Ridge Comparison ===")
+baseline_sd <- sd(rapm_results_filtered$baseline_per40, na.rm = TRUE)
+ridge_sd <- sd(rapm_results_filtered$ridge_per40, na.rm = TRUE)
+message(paste("Baseline APM SD:", round(baseline_sd, 4)))
+message(paste("Ridge RAPM SD:", round(ridge_sd, 4)))
+message(paste("Shrinkage factor:", round(ridge_sd / baseline_sd, 3)))
+
+message("\n✓ RAPM fitting complete!")
+message(paste(
+  "Total players analyzed:", nrow(rapm_results_filtered),
+  "(", nrow(rapm_results) - nrow(rapm_results_filtered), "filtered out)"
+))
 ```
 
-**Results:**
+**Validation results:**
 
 - Mean RAPM ≈ 0 (verified: `r sprintf("%.6f", rapm_results$sanity_checks$rapm_mean)`)
 - Correlation with minutes ≈ 0 (verified: `r sprintf("%.3f", rapm_results$sanity_checks$minutes_cor)`)
@@ -1377,7 +1763,7 @@ message(paste("Improvement:", sprintf("%.1f%%",
 - Baseline OOS MSE: `r sprintf("%.6f", rapm_results$oos_validation$baseline_mse)`  
 - Improvement: `r sprintf("%.1f%%", 100 * (1 - rapm_results$oos_validation$ridge_mse / rapm_results$oos_validation$baseline_mse))`
 
-These validation checks confirm that our regularization is working correctly and improving generalization.
+These checks confirm that our regularization is working correctly and improving generalization. All validation code is included in the complete RAPM estimation chunk above.
 
 # Results
 
