@@ -1,5 +1,5 @@
 ---
-title: "Regularized Adjusted Plus Model"
+title: "Regularized Adjusted Plus Minus Model"
 subtitle: "Player Impact using Win Probability RAPM in D1 NCAA Basketball"
 author: "Ellie Brothers, Jasmine Peck, Kalynn Willis"
 date: "October 6, 2025"
