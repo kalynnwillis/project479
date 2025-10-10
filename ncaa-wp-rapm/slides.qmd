@@ -3,6 +3,37 @@ title: "Regularized Adjusted Plus Model"
 subtitle: "Player Impact using Win Probability RAPM in D1 NCAA Basketball"
 author: "Ellie Brothers, Jasmine Peck, Kalynn Willis"
 
+<style>
+/* Only show logos on the first slide */
+.reveal .slides > section:first-child::after {
+  content: "";
+  background-image: url("https://upload.wikimedia.org/wikipedia/commons/7/7a/Basketball.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  bottom: 10px;
+  left: 40px;
+  width: 180px;
+  height: 180px;
+  opacity: 0.7;
+  z-index: 10;
+}
+
+.reveal .slides > section:first-child::before {
+  content: "";
+  background-image: url("https://upload.wikimedia.org/wikipedia/commons/d/dd/NCAA_logo.svg");
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  bottom: 10px;
+  right: 40px;
+  width: 180px;
+  height: 180px;
+  opacity: 0.7;
+  z-index: 10;
+}
+</style>
+
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(readr)
@@ -348,8 +379,8 @@ Also note these players have large sample sizes—100+ games, 3000+ minutes. We'
 ![](figs/top_players_rapm.png){fig-alt="Bar chart of top 30 players by Ridge RAPM" width="90%"}
 
 ::: {.fragment}
-- Large drop after Top 4, 
-- Players included have more than 2000 minutes and more than 50 games, so we had enought data to use  
+- Large drop after Top 4 
+- Players included have more than 2000 minutes and more than 50 games, so we had enough data to use  
 :::
 
 ::: notes
