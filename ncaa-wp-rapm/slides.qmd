@@ -2,6 +2,19 @@
 title: "Regularized Adjusted Plus Model"
 subtitle: "Player Impact using Win Probability RAPM in D1 NCAA Basketball"
 author: "Ellie Brothers, Jasmine Peck, Kalynn Willis"
+date: "October 6, 2025"
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    toc: false
+    code-fold: false
+    incremental: true
+    preview-links: false
+    width: 1600
+    height: 900
+    smaller: false
+---
 
 <style>
 /* Only show logos on the first slide */
@@ -343,11 +356,12 @@ Ridge regression applies a shrinkage penalty that pulls all coefficients toward 
 
 ## Top Players Impact {.smaller}
 
-::: {.fragment}
+::: {layout-ncol=2}
+
+::: {.column}
 **Interpretation:** Isiaih Mosley has 0.166 = **+16.6 percentage points of win probability**  
 - 50/50 game
 - His team moves up to approx. 66.6% chance  
-:::
 
 ```{r top-players, echo=FALSE}
 rapm_main %>%
@@ -357,6 +371,16 @@ rapm_main %>%
   mutate(ridge_per40 = sprintf("%.3f", ridge_per40)) %>%
   kable(col.names = c("Player", "RAPM (per 40 min)", "Games", "Minutes"))
 ```
+:::
+
+::: {.column}
+![](figs/top_players_rapm.png){fig-alt="Bar chart of top 30 players by Ridge RAPM" width="100%"}
+
+- Large drop after Top 4 
+- Players included have more than 2000 minutes and more than 50 games
+:::
+
+:::
 
 ::: notes
 Here are our top players. We're showing their Ridge RAPM per 40 minutes—that's the win probability impact if they played a full game.
@@ -369,26 +393,9 @@ Over a 30-game season, that 16.6-point edge translates to roughly 5 additional w
 
 Notice the drop-off. The number 2 player, Sir'Jabari Rice, is at 0.143. By the time you get to the 5th or 6th player, you're around 0.09 or 0.10. Elite players really do stand out.
 
+This visualization shows the top 30 players ranked by Ridge RAPM. You can see the clear drop-off—Mosley at the top is significantly ahead of everyone else. The gap between positions 1-3 and positions 4-10 is substantial. Then it flattens out.
+
 Also note these players have large sample sizes—100+ games, 3000+ minutes. We're not basing these rankings on small samples. These are well-established effects.
-:::
-
----
-
-## Top 30 Players {.smaller}
-
-![](figs/top_players_rapm.png){fig-alt="Bar chart of top 30 players by Ridge RAPM" width="90%"}
-
-::: {.fragment}
-- Large drop after Top 4 
-- Players included have more than 2000 minutes and more than 50 games, so we had enough data to use  
-:::
-
-::: notes
-This visualization shows the top 30 players ranked by Ridge RAPM. You can see the clear drop-off—Mosley at the top is significantly ahead of everyone else.
-
-The gap between positions 1-3 and positions 4-10 is substantial. Then it flattens out. This is exactly what we want to see from our regularization. If there were no shrinkage, we'd see wild swings. If there were too much shrinkage, everyone would be at the same level.
-
-This pattern reflects real differences in elite talent combined with conservative estimation for players with less overwhelming evidence. Remember, all these players cleared our minimum thresholds—at least 2000 total minutes and 50 games played.
 :::
 
 ---
