@@ -1,6 +1,6 @@
 ---
 title: "Player Impact Analysis via Win Probability RAPM: NCAA Men's Basketball 2018-2024"
-author: "NCAA RAPM Analysis Team"
+author: "Ellie, Kalynn, Jasmine"
 date: "October 6, 2025"
 format:
   html:

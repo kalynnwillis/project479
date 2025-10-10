@@ -1,7 +1,7 @@
 ---
-title: "Measuring What Matters"
-subtitle: "Player Impact via Win Probability RAPM in NCAA Basketball"
-author: "NCAA RAPM Analysis Team"
+title: "Regularized Adjusted Plus Model"
+subtitle: "Player Impact using Win Probability RAPM in D1 NCAA Basketball"
+author: "Ellie Brothers, Kalynn Willis, Jasmine Peck"
 date: "October 6, 2025"
 format:
   revealjs:
@@ -15,6 +15,37 @@ format:
     height: 900
     smaller: false
 ---
+
+<style>
+/* Only show logos on the first slide */
+.reveal .slides > section:first-child::after {
+  content: "";
+  background-image: url("https://upload.wikimedia.org/wikipedia/commons/7/7a/Basketball.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  bottom: 10px;
+  left: 40px;
+  width: 180px;
+  height: 180px;
+  opacity: 0.7;
+  z-index: 10;
+}
+
+.reveal .slides > section:first-child::before {
+  content: "";
+  background-image: url("https://upload.wikimedia.org/wikipedia/commons/d/dd/NCAA_logo.svg");
+  background-size: contain;
+  background-repeat: no-repeat;
+  position: absolute;
+  bottom: 10px;
+  right: 40px;
+  width: 180px;
+  height: 180px;
+  opacity: 0.7;
+  z-index: 10;
+}
+</style>
 
 ```{r setup, include=FALSE}
 library(tidyverse)
@@ -39,9 +70,7 @@ best_calib_slope <- wp_eval %>%
 shrinkage_factor <- 0.199  # From logged output
 ```
 
-# Background
-
-## The Problem: Who Really Helps Teams Win? {.smaller}
+## Background: The Problem - Who Really Helps Teams Win? {.smaller}
 
 **Scenario:** Two players, both average 15 points per game
 
@@ -171,9 +200,7 @@ Our workaround is to use starter-based, half-level stints. We track the starting
 This means our player-level results should be considered exploratory rather than definitive. But the methodology is sound, and with better data, this would be production-ready.
 :::
 
-# Analysis Overview
-
-## Step 1: Build Win Probability Model {.smaller}
+## Analysis Overview: Step 1 - Build Win Probability Model {.smaller}
 
 **Goal:** Predict P(home team wins) at any game moment
 
@@ -331,9 +358,7 @@ Now here's the critical part: with 10,000 players and only 38,000 stints, we hav
 Ridge regression applies a shrinkage penalty that pulls all coefficients toward zero. Players with strong, consistent evidence of impact keep high estimates. Players with limited or noisy data get conservative estimates close to zero. Our final shrinkage factor is 0.20, meaning our estimates vary 20% as much as an unregularized model would produce. That's strong regularization, but it's necessary given the data noise.
 :::
 
-# Main Results
-
-## Top Players: Impact on Winning {.smaller}
+## Main Results: Top Players - Impact on Winning {.smaller}
 
 ```{r top-players, echo=FALSE}
 rapm_main %>%
@@ -526,9 +551,7 @@ But statistical significance doesn't mean practical importance. With 38,000 stin
 The takeaway is clear: individual talent dominates. Conference matters—probably through coaching, systems, and resources—but player skill is five times more important. If you're recruiting, you should care way more about getting great players than about which conference they come from.
 :::
 
-# Conclusion
-
-## Key Results Summary {.smaller}
+## Conclusion: Key Results Summary {.smaller}
 
 ![](figs/combined_analysis.png){fig-alt="Four-panel summary: top players, distribution, RAPM vs minutes, Ridge vs Lasso" width="100%"}
 
