@@ -1,6 +1,6 @@
 ---
 title: "Player Impact Analysis via Win Probability RAPM: NCAA Men's Basketball 2018-2024"
-author: "Ellie, Kalynn, Jasmine"
+author: "NCAA RAPM Analysis Team"
 date: "October 6, 2025"
 format:
   html:
@@ -14,77 +14,37 @@ format:
 ---
 
 # Executive Summary
-
-**For Basketball Decision-Makers: Understanding Player Value**
-
-Coaches, scouts, and front office personnel face a fundamental challenge: determining which players truly help their teams win. Traditional statistics like points per game can be misleading—a player might score 25 points but allow 30 on defense, or pad stats in garbage time when games are already decided. This analysis solves that problem by measuring what matters most: how much each player actually improves their team's chances of winning.
-
-**Our Approach**
-
-We analyzed seven seasons of NCAA Division I men's basketball (2018-2024), covering nearly 40,000 games and over 12 million individual plays. Our method works in two stages:
-
-First, we calculate "win probability" for every moment in every game—the chance that the home team will ultimately win based on the current score, time remaining, and who has the ball. For example, leading by 5 points with 2 minutes left might translate to an 85% win probability. By tracking how this probability changes throughout each game, we can measure which lineups increase (or decrease) their team's winning chances.
-
-Second, we use statistical techniques to isolate individual player contributions. When a lineup performs well, which players deserve credit? When they struggle, who is responsible? Our model accounts for teammate quality, opponent strength, conference differences, and game context to attribute impact to each player fairly. We apply regularization (a mathematical technique that prevents overfitting to small sample sizes) to ensure our estimates are stable and reliable.
-
-**What We Found**
-
-We identified 2,316 players who met our reliability thresholds (at least 2,000 total minutes and 50 games played). The top performers demonstrate remarkable impact:
-
-- **Isiaih Mosley** leads all qualified players, improving his team's win probability by approximately 16.6 percentage points over a full 40-minute game. To put this in context: if two evenly-matched teams played, the team with Mosley would start with a 66.6% chance of winning instead of 50%.
-
-- **Sir'Jabari Rice** (14.3 percentage points per 40 minutes) and **Gavin Kensmil** (11.8 points) round out the top three, showcasing elite two-way impact that traditional statistics might miss.
-
-- The distribution of player impacts is roughly bell-shaped and centered near zero, meaning most players have neutral or modest effects, while truly elite players stand out significantly.
-
-We also examined conference effects to understand whether league environment matters beyond individual talent. While we found that major conferences like the Big 12 provide modest advantages (+3.7 percentage points per 40 minutes), these effects are modest compared to player effects. The full player range (36.8 percentage points) is approximately 4.2 times larger than the total conference effect range (8.7 percentage points), and the top player's impact (16.6 points) is 4.5 times larger than the Big 12 advantage. This confirms what coaches intuitively know: recruiting and developing elite players matters far more than conference affiliation.
-
-**Important Limitation**
-
-Our data source lacks substitution information—we don't know exactly when players check in and out during games. We work around this by analyzing half-long stints with starting lineups, but this means our player-level results should be considered exploratory rather than definitive. The methodology is sound, but more detailed data would strengthen our conclusions.
-
-**Bottom Line**
-
-This analysis provides a rigorous, context-aware method for evaluating player contributions to winning. Unlike raw statistics, our approach accounts for competition level, teammate quality, and game situations. Teams could use this framework to identify undervalued players, optimize recruiting strategies, and make more informed personnel decisions. With access to detailed substitution data, this system could become an operational tool for player evaluation and lineup optimization.
+In college basketball, coaches and recruiters face a fundamental challenge when deciding playing time and team rosters: which players help their teams win games. Traditional box score statistics like points scored, assists, or rebounds might be misleading – a player could score 25 points but give up 30 against their defensive match-up, or score 10 points in garbage time when their team was already going to win. Our analysis addresses this issue by measuring how much each individual player improves their team’s chances of winning, addressing broader variables including teammates, opponent quality, score differentials, and crunch time.
+We utilized hoopR basketball play-by-play data, analyzing the seven seasons of NCAA Division 1 men’s basketball that had all of the data we needed (2018-2024), covering nearly 40,000 games and over 12 million individual plays. We calculated the “win probability” for every moment in every game: the likelihood that the home team will win based on the current situation (factors like score, time remaining and ball possession). For example, leading by 5 points with 2 minutes left might translate to an 85% win probability for that team. By tracking how the win probability changes by each event throughout the game, we can measure how lineups increase (or decrease) their team’s winning chances.
+Next, we use statistical techniques to model individual player contributions. For instance, if a given line of five players scores, one player had an assist and another made the shot – they deserve more “credit” for their team’s associated increase in win probability. Our model accounts for teammate quality, opponent strength, conference differences, and game context to attribute impact to each player. We ensure our estimates are stable and reliable by regularizing (a statistical technique) – this means that we have adjusted so limited minutes don’t make a player look better or worse than they are.
+We identified 2,316 players who met our reliability thresholds (at least 2,000 total minutes and 50 games played). The two top performers have a remarkable impact on their team’s win probability. Isiaih Mosley leads all players, improving his team’s win probability by 16.6 percentage points over a 40-minute game. In context, if Mosley’s team was playing against an evenly-matched team, having Mosley on the court for the entire game would bring his team’s chances of winning up from 50% to 66.6%. Secondly, our model has Sir’Jabari Rice improving his team’s win probability by 14.3 percentage points per 40 minutes. If his team had five minutes left in a tied game against an evenly-matched team, Rice’s presence on the court would shift the winning probability from 50% to 51.8%. Another important result is that the distribution of player impacts is centered around zero, meaning most players have modest effects, while the truly elite players really stand out.
+It’s important to note that ESPN lacks substitution events for college basketball, so we worked around this by analyzing half-level stints with starting lineups. The results are informative but should be viewed as exploratory until possession-level lineup data is available.
 
 ---
 
-# Introduction: The Problem of Player Evaluation
+Using hoopR play-by-play, we model win probability on each play and estimate player impact using a regularized Adjusted Plus-Minus (RAPM) on the win-probability scale. Our approach extends prior APM/RAPM methods with several improvements. We outline the motivation, construction, main findings, and limitations/next steps in this article.
+
 
 ## Motivation and Background
 
-**The Challenge:** Basketball teams need to answer a deceptively simple question: "Which players make us better?" Traditional box score statistics—points, rebounds, assists—capture individual actions but fail to measure what matters most: **impact on winning**. A player might average 20 points per game but play poor defense, take inefficient shots, or accumulate stats when games are already decided. Conversely, a player averaging 8 points might be elite at creating open shots for teammates, shutting down opposing stars, or making winning plays in crucial moments.
+Many NCAA Division 1 basketball coaches and recruiters are all asking the same question – “which players make our team win?”. At first glance, it seems like this question could easily be answered through traditional box score statistics (points, assists, rebounds, steals, etc.), but these individual metrics fail to capture the overall impact on winning. For example, a player may have a high shooting percentage, but perform very poorly defensively, giving up a lot of points to the other team and hurting their team’s overall win probability. Or, a player may score relatively fewer points than other players in a game, but within the last two minutes gets a game-winning 3-point shot that overturns a tie, winning a game for their team. Intuitively, these points have more game-winning value than any other arbitrary point.
+These metrics, among others, need to be accounted for when evaluating which players best help their team win. In basketball, 10 individuals are on the court at once, constantly switching the five players currently on the line and their individual defensive match-ups, forcing us to consider how much credit belongs to each player for a given play. The problem becomes even more interesting when we aim to evaluate: 
+- **Point context and crunch time**: Scoring at the end of a game with a close score is more important than an early-game point with a sizable lead.
+- **Competition**: How challenging an opponent is will affect basic box score statistics and a player’s ability to score a lot of points, for example.
+- **Team**: Having other high-performing players on a player’s basketball team may over-inflate their individual contributions (intuitively, it makes sense that a good Point Guard may make good assists to the Shooting Guard, bringing up the Shooting Guard’s points scored).
+- **Sample size**: If a player only plays for two minutes in a game, but hits a basket to score 2/2 points, their shooting percentage will be over-inflated due to statistical noise.
 
-**Why This Problem Is Hard:** Unlike baseball, where individual at-bats and pitches can be analyzed in isolation, basketball is a continuous flow game with five players on each side simultaneously affecting every possession. When a lineup outscores opponents by 10 points, how much credit belongs to each player? The challenge becomes even more complex when we consider:
 
-- **Context matters:** Scoring 10 points in the first half matters less than scoring 10 in the final 5 minutes of a close game.
-- **Quality of competition:** Dominating weak opponents tells us less than competing against elite teams.
-- **Teammate effects:** A player's performance depends partly on who they play with and against.
-- **Sample size:** College players typically have 100-150 game careers, making statistical noise a serious concern.
+Our model builds upon the existing method of Regularized Adjusted Plus-Minus (RAPM), which uses regression techniques to control for teammates and opponents in order to analyze individual contributions. An apparent lack of insight in the RAPM analysis is the lack of control for clutch time performance. Each basket scored has a different relative impact to the overall game winning probability depending on the point differential and minutes left in the game. We aim to control for these variables by introducing a measurement of player impact through a win probability – given certain metrics such as point differential, time, and possession, we can automatically weight clutch situations more heavily than irrelevant time to the actual game outcome. If player A and player B have similar box score statistics, but player A is consistently scoring and playing high-performing defensive in high-leverage situations, player A will be ranked higher than player B. 
 
-**Existing Approaches:** Professional basketball analytics have developed sophisticated methods like Adjusted Plus-Minus (APM) and its variants, which use regression techniques to isolate individual contributions while controlling for teammates and opponents. However, these methods typically assume that **all points are equal**—a basket that extends a 20-point lead counts the same as a basket that ties a close game. This assumption ignores the fundamental reality that **points have different values depending on game context**.
 
-**Our Innovation:** We measure player impact through the lens of **win probability**—the probability that a team will win given the current game state (score, time, possession). By converting on-court events into win probability changes (ΔWP), we automatically weight clutch situations more heavily and disregard garbage time. A player who consistently increases their team's win probability in high-leverage moments is more valuable than one who pads stats in blowouts, even if their box scores look similar.
 
-**Why This Matters:** This analysis has practical applications for:
-
-- **Recruiting:** Identifying undervalued players whose impact exceeds their traditional statistics
-- **Lineup optimization:** Understanding which player combinations maximize winning chances
-- **Strategic decisions:** Allocating minutes and roles based on true impact rather than scoring volume
-- **Player development:** Targeting areas where improvement would most increase team success
-
-**Research Questions:**
-
-1. Can we build accurate, well-calibrated win probability models for NCAA basketball using publicly available play-by-play data?
-2. How much do individual players affect win probability after accounting for teammates, opponents, and context?
-3. Are conference and era effects statistically significant, and how do they compare in magnitude to player effects?
-4. What are the limitations of ESPN play-by-play data for player evaluation, and what data improvements would be most valuable?
-
-The following sections detail our data sources, methodology, results, and limitations in answering these questions.
 
 ---
 
 # Data & Methods
+
+To begin, we draw publicly available NCAA Division 1 play-by-play data through the hoopR package. The hoopR package has functions to access live play by play and box score data from ESPN, for both professional and college basketball.
 
 ::: {.callout-important}
 ## Code Reproducibility
@@ -422,14 +382,9 @@ message("\nDone!")
 
 ### Dataset Summary
 
-The final dataset comprises:
+It is important to note that in our analysis, players are referenced from their athlete_id rather than their first and last name listed. This is because some players may have the same name, and if we draw by name, the statistics for multiple players will be drawn into one row – this would result in incorrect conclusions with invalid rankings. For example, “Jalen Johnson” refers to 18 different individuals across the 7 seasons we are pulling from, so we need to make sure the name “Jalen Johnson” is separated into 18 unique rows in the data by athlete_id.
 
-- **38,625 games** across all NCAA D-I teams
-- **12.48 million play-by-play events** with game state information
-- **808,826 player-game box score records** 
-- **35,457 unique players** identified by ESPN's `athlete_id`
 
-**Critical data engineering note:** We track players by unique `athlete_id` rather than display name. This is essential because **1,411 display names map to multiple different athletes** in our dataset. For example, "Jalen Johnson" refers to 18 distinct individuals across different teams and seasons. Using display names for aggregation would create phantom "super-players" with inflated statistics and completely invalid rankings.
 
 ```{r verify-player-ids}
 # Verify the player ID collision problem
@@ -467,19 +422,14 @@ name_collisions %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-After filtering to games with complete starting lineup data (99.4% of games), we construct **37,974 half-level stints** covering **9,917 unique players** who appeared as starters.
+We filter on games with complete starting lineup data (which is 99.4% of games), and we construct 37,974 half-level stints covering 9917 unique players appearing as starters. This means that we only keep the games for which we know all 10 starters with no missing values, and we account for the starting line-ups for both halves of a game. Because we didn’t have substitution data, which will be commented on further in our data limitations discussion, we chose to account for half-level stints. Coaches will typically start the best players in their starting line-up, so we hypothesize this will still answer the question of “which players help their team win.” Our final dataset includes 38,625 games across all NCAA Division 1 teams, 12.48 million play-by-play events, and over 35,000 unique players pulling from their athlete_id.
 
 ## Win Probability Modeling
 
-### Conceptual Framework
+Next, we want to calculate the impact of a given player on the team outcome, so we decide to rank the best players through a win probability model. A win probability represents the likelihood that the home team will win given the current game state. For example, a home team trailing 55-60 at halftime has a 35% chance of winning. A win probability model is constructed by training on millions of previous game events where we know the final outcome. The model replicates patterns like: Team A leading by 10 points with 5 minutes left wins 95% of the time against Team B. Our model would then allocate extra weight to players on Team B who score points against Team A in those remaining 5 minutes. As another example, when a game has win probability change by 8 percentage points, like 48 to 56 percent, it means it is a close game. Then when a play has the win probability change by 2 points from 93 to 95 percent, this game was practically decided already. Thus, we take into consideration change in win probability per time change (like by minute), alter for team players versus opponents, and player individual impact on winning.
 
-Win probability (WP) represents the likelihood that the home team will win given the current game state. For example:
+To begin, we select the features that we hypothesize to affect an individual player’s influence on win probability for their respective team. We include score differential, the minutes remaining on the clock, the interaction between score differential and minutes left, the score differential squared (to account for non-linearity – a 10-point lead is not linearily twice as safe as a 5-point lead), and scoring points in clutch time.
 
-- Home team leading 70-65 with 2:00 remaining → WP ≈ 0.92 (92% chance)
-- Home team trailing 55-60 at halftime → WP ≈ 0.35 (35% chance)
-- Tied game with 10:00 remaining → WP ≈ 0.50 (50% chance)
-
-We build WP models by training on millions of in-game states where we know the final outcome. The model learns patterns like "teams leading by 10 points with 5 minutes left win 95% of the time."
 
 ### Feature Engineering
 
@@ -562,7 +512,8 @@ predictors <- c(
 
 ### Model Training
 
-We train four model types to compare performance:
+In our analysis, we trained four model types (logistic regression, gradient boosting machine, random forest, and XGBoost) to compare athlete performance and then assessed their accuracy using Brier score, calibration quality and AUC.
+
 
 ```{r wp-model-training, eval=FALSE}
 # EXACT CODE FROM R/02_build_wp_model_RF.R (lines 71-159)
@@ -658,17 +609,9 @@ pred_xgb_test <- predict(model_xgb, test_matrix)
 
 ### Model Selection Criteria: Calibration vs. Discrimination
 
-**Critical insight:** We prioritize **Brier score and calibration quality** over AUC (discrimination). 
+The table displays our model evaluation results among AUC, Brier Score, and calibration quality. AUC measures the discrimination ability to see if the model can distinguish winners from the losers, Brier Score is the mean squared error of probabilistic predictions, and calibration analyzes if the predicted probabilities match the observed frequencies. We prioritize Brier score and calibraiton quality over AUC since our player ratings rely on precise changes in win probability. Accurate, well-calibrated probabilities lead to fairer changes in win probability and more trustworthy player impact estimates.
 
-**Why?** We use predicted probabilities to compute changes in win probability (ΔWP). If a model systematically overestimates probabilities (e.g., predicts 0.90 when true probability is 0.75), that bias propagates through the entire RAPM estimation. A well-calibrated model might have slightly lower AUC but produce more accurate win probability changes.
 
-**Evaluation metrics:**
-
-1. **AUC (Area Under ROC Curve):** Measures discrimination ability—can the model distinguish winners from losers?
-2. **Brier Score:** Mean squared error of probabilistic predictions. Lower is better. Formula: $\frac{1}{n}\sum_{i=1}^{n}(p_i - y_i)^2$ where $p_i$ is predicted probability and $y_i$ is actual outcome (0 or 1).
-3. **Calibration:** Do predicted probabilities match observed frequencies? We assess by fitting `glm(actual ~ qlogis(predicted), family=binomial)` on test data. Perfect calibration yields:
-- **Intercept ≈ 0** (no systematic bias)
-   - **Slope ≈ 1** (correct spread of predictions)
 
 ```{r wp-model-evaluation, eval=FALSE}
 # EXACT CODE FROM R/02_build_wp_model_RF.R (lines 160-285)
@@ -815,21 +758,15 @@ wp_eval %>%
 
 **Selected model:** `r wp_models$best_model_name` achieves the best Brier score (`r sprintf("%.4f", min(wp_eval$Brier_Score[wp_eval$Dataset == "Test"]))`) with calibration slope near 1.0, despite slightly lower AUC than XGBoost.
 
-**Key finding:** Logistic regression, despite being the simplest model, provides the best-calibrated probabilities. XGBoost achieves slightly higher AUC (0.861 vs 0.858) but shows systematic miscalibration (slope = 3.76), overconfident at extreme probabilities. For our application—computing accurate win probability changes—calibration trumps discrimination.
+We have selected the logistic regression model based on both quantitative and qualitative factors. Logistic regression achieves the best Brier score (0.1513) with a calibration slope near 1.0 (the closest of any of the four models). Even though XGBoost has a higher AUC than the Logistic regression model, we have qualitatively chosen to prioritize Brier score and calibration quality. For our analysis – computing accurate win probability changes – a calibration of 1 is going to be more valuable than a high AUC value. A model can rank well (high AUC), but be poorly calibrated, especially in extreme game states, which distorts the win-probability changes. 
 
 ## Stint Construction and Response Variable
 
 ### Lineup Tracking Constraints
 
-**Data limitation:** ESPN play-by-play does not include substitution events. We cannot observe when players check in and out during games.
+A data limitation we encountered (that will be discussed further in the limitations section) is that ESPN play-by-play college basketball data does not include substitution events. So, we cannot observe when players sub in and out for on-court lineups. We do not know the exact moments players are on the court, unlike the NBA hoopR package that provides lineup information throughout the entirety of the game. This matters because we would ideally track every lineup change to get the change in win probability for each possession-level stint. 
 
-**Why this matters:** Ideally, we would track every lineup change (substitution) and compute ΔWP for each possession-level stint. This would give us precise attribution of which players were on court during each win probability change.
-
-**Our solution:** We use **starter-based, half-level stints** as a defensible proxy. While imperfect, this approach has important advantages:
-
-1. **Reliability:** Starting lineups are accurately recorded in box scores
-2. **Sample size:** Half-level stints (~20 minutes) provide enough observations to measure ΔWP
-3. **Bias reduction:** Starters play majority of minutes, so half-level approximation captures most of their impact
+Our solution is to use starter-based, half-level stints because this gives a window to evaluate performance. For each game we create two stints and attribute that half’s change in probability to the five recorded starters on that team. This approach has a few advantages including generating a large enough sample size to measure changes in win probability and reducing bias (starters play a majority of minutes so half-level is capturing most of their impact). To go further, the strongest players are often starters, so intuitively, we are still creating a reliable model for determining the players who will influence the likelihood of their team winning. We attempt to justify this because on average, starters play around 25-30 minutes per 40 minute game, so they are playing over half of the time. However, by assuming the starters play the entire game, we accidentally praise or blame someone when we don't know if they sub in or out. Even if a bench player played for 15 minutes and had an impactful game winning shot, they wouldn’t be in the RAPM because they are not starters. It's not perfect, but it's an exploratory way to use the data that is justifiable given the constraints.  
 
 Here is the complete stint construction code:
 
@@ -1106,23 +1043,15 @@ For each stint, we compute the change in win probability normalized to a per-min
 
 $$y_i = \frac{\Delta WP_i}{\max(duration_i, 60)} \times 60$$
 
-where $\Delta WP_i = WP_{end} - WP_{start}$ is the raw win probability change, and we set a minimum duration of 60 seconds to avoid dividing by very small numbers.
+where $\Delta WP_i = WP_{end} - WP_{start}$ is the raw win probability change, and we set a minimum duration of 60 seconds to avoid dividing by very small numbers. This is a reasonable assumption because coaches would not often engage players for fewer than 60 seconds. 
 
-**Outlier guards:** We cap extreme values at ±2% WP per minute. This is reasonable because:
-
-- A perfect stint (100% → 100% WP maintained) averages +0% per minute
-- Gaining 10% WP in 10 minutes = +1% per minute is excellent
-- Changes exceeding ±2% per minute are likely measurement error or garbage time
+We also put outlier guards on the change in win probability by cutting any change bigger than 2 percentage points per minute. This makes sense because when changes are more than ±2% per minute, it is likely a measurement error or garbage-time point swings that don’t actually support an individual player’s impact. To understand this more concretely, even if an individual plays really well for 10 minutes and increases their team’s win probability by 10%, they are only increasing the win probability by an additional 1% per minute.
 
 ### Weighting Scheme
 
-We apply two types of weights to reflect data quality and relevance:
+Next, we wanted our weighted RAPM model to reflect both duration and leverage. The longer stints give a more reliable estimate of the lineup performance. If we were to model the weight linearly, then the shorter stints would essentially have no value compared to the long ones, but if we had no weighting, then shorter stings would be weighted equally to the longer ones (this doesn’t make sense intuitively). So, we decided to take the square root of the duration to temper the effect of the longer stints, but still have them weigh more in the model than those in shorter duration. Secondly, we weight the model by leverage, which incorporates both point differential and time remaining. Our leverage weighting formula is : $w_i^{(leverage)} = $ 
 
-**1. Duration weighting:** $w_i^{(duration)} = \sqrt{duration_i}$
-
-Longer stints provide more reliable estimates of lineup performance. We use square root rather than linear weighting to avoid over-weighting extremely long stints.
-
-**2. Leverage weighting:** $w_i^{(leverage)} = $ 
+We have the following weighting:
 
 - 2.0 if close (|score diff| ≤ 10) AND clutch (time < 5 min)
 - 1.5 if close but not clutch
@@ -1139,21 +1068,7 @@ The leverage weighting is computed in the stint construction code above, and the
 
 ## RAPM Estimation
 
-### Conceptual Framework
-
-Regularized Adjusted Plus-Minus (RAPM) isolates individual player contributions from team performance. The core idea:
-
-- When a lineup performs well (positive ΔWP), which players deserve credit?
-- When a lineup struggles (negative ΔWP), which players are responsible?
-- Account for teammates (good players can be hidden by bad teammates)
-- Account for opponents (dominating weak teams doesn't prove elite skill)
-
-We solve this using regression with **regularization** to prevent overfitting in the presence of:
-- **Multicollinearity:** Players who often play together (starters on the same team)
-- **Sample size variation:** Some players have 50 games, others have 150
-- **Noisy observations:** Half-level stints are aggregates, not perfect measurements
-
-### Design Matrix Construction, Regularization, and Cross-Validation
+Regularized Adjusted Plus-Minus (RAPM) measures an individual player’s contributions to their team’s performance. When building our model, we asked ourselves which players deserve credit for good plays, which players were responsible for bad players, and the impact of both teammates and opponent matchups. We solve this using regression with regularization to prevent overfitting, which can happen due to multicollinearily (the same teammates are often on the court together) or sample size variation (each player may have played in a different number of games).
 
 Here is the complete RAPM estimation code, including player matrix construction, fixed effects, regularization, and validation:
 
@@ -1769,7 +1684,7 @@ These checks confirm that our regularization is working correctly and improving 
 
 ![Win Probability Model Calibration Curves](figs/wp_calibration.png){fig-alt="Calibration plots for all four WP models showing predicted vs observed win rates" width="85%"}
 
-**Figure 1:** Calibration curves for all candidate models. Points near the diagonal (y=x) indicate good calibration. Logistic (purple) tracks the diagonal most closely with slope = 1.05, while XGBoost (yellow) shows systematic overconfidence at extreme probabilities (slope = 3.76). This visualization demonstrates why we selected Logistic regression despite XGBoost's slightly higher AUC (0.861 vs 0.858)—accurate probability estimates matter more than discrimination for computing win probability changes.
+**Figure 1:** Above, we have a figure highlighting the calibration curves for all of the four different models we fitted for win probability. Points near the diagonal dashed lines (y = x) indicate good calibration because they have a slope of approximately 1. We can see that the logistic model (in purple) has the most similar slope to the calibration line, as determined by our table earlier. To go further, we can see that XGBoost (in yellow) is producing probabilities that are too extreme for what is actually observed. This model gives a visual representation to our earlier analysis for the table comparing the models – the logistic regression is the model best fit for the change in win probability, despite having a slightly lower AUC than XGBoost. 
 
 ## Player RAPM Rankings
 
@@ -1788,40 +1703,13 @@ rapm_main %>%
 
 ### Interpreting Player Impact: Concrete Examples
 
-**Example 1: Isiaih Mosley (Missouri State)**
+After running the logistic ridge regression RAPM model, we can view the top 20 players. We will comment on Isiaih Mosley and Sir’ Jabari Rice.
 
-Mosley leads all qualified players with a Ridge RAPM of **0.166 per 40 minutes** (16.6 percentage points). What does this mean in practice?
+Isiaih Mosley, a basketball player at Missouri State from 2019 - 2022, leads all qualified players with a Ridge RAPM of 0.166 per 40 minutes, translating to 16.6 percentage points. If we were to put this into a fictional context, we can imagine Missouri State playing an exactly evenly-matched opponent (meaning that both teams would win with 50% probability). If Mosley were to play all 40 minutes, Missouri State’s win probability would increase to 66.6% (50% + 16.6%)! Thinking about this from a cumulative perspective, in a single 30-game season, Mosley might single-handedly help Missouri State win an additional 5 games (30 games * 0.166 = 4.98 extra wins). At first glance, Mosley’s stats – 16.8 PPG and 5.1 RPG –  might not seem impressive enough to be ranking first in our dataset, but when modeling on Ridge RAPM, it is evident he has a very impressive all-around impact (likely in great defense and other winning plays).
 
-- **Game scenario:** Suppose Missouri State faces an evenly-matched opponent. Without considering individual players, both teams start with a 50% win probability.
-- **Mosley's impact:** With Mosley playing all 40 minutes, Missouri State's win probability increases to approximately **66.6%** (50% + 16.6 percentage points).
-- **Cumulative effect:** Over a 30-game season, this 16.6-point advantage translates to roughly **5 additional wins** (30 games × 0.166 = 4.98 extra wins) that Missouri State might not otherwise have achieved.
-- **Percentile:** 100th percentile—literally the best qualified player in our entire dataset.
+Secondly, Sir’ Jabari Rice jumps out as an elite player – ranking second in our Ridge RAPM with 0.143 per 40 minutes, translating to 14.3 percentage points. He has played 149 games in our dataset with a total of 3,665 minutes, which is a large and reliable sample size. As a concrete example, if there were 5 minutes left in a tied game against an evenly-matched team, Rice’s presence on the court would shift the winning probability from 50% to 51.8% (0.143 * 5/40). This can be a game-winning difference for a team – especially considering crunch time and small point differentials.
 
-**Why Mosley stands out:** While his traditional stats (16.8 PPG, 5.1 RPG) are good but not spectacular, his RAPM reveals exceptional all-around impact—likely elite defense, smart shot selection, and winning plays that don't show up in box scores.
-
-**Example 2: Sir'Jabari Rice (Texas)**
-
-Rice ranks #2 with Ridge RAPM of **0.143 per 40 minutes** (14.3 percentage points):
-
-- Played 149 games with 3,665 total minutes—a large, reliable sample
-- His impact means that in a close game with 5 minutes remaining and teams tied, Rice's presence might shift Texas's win probability from 50% to approximately 51.8% (0.143 × 5/40)
-- This 1.8-point advantage in crunch time can be the difference between winning and losing close games
-
-**Example 3: Comparing High-Volume Scorers vs. High-Impact Winners**
-
-Let's compare two hypothetical players (based on patterns in our data):
-
-**Player A:** 22 PPG, 8 RPG, but RAPM = +0.02 per 40 min (slightly above average)
-- Traditional stats look impressive
-- However, might take inefficient shots, play poor defense, or accumulate stats in garbage time
-- Net impact on winning: modest
-
-**Player B:** 12 PPG, 4 RPG, but RAPM = +0.08 per 40 min (top 10%)
-- Traditional stats are unimpressive
-- However, might excel at defense, create open shots for teammates, and make smart plays in critical moments
-- Net impact on winning: substantial
-
-**Key insight:** RAPM separates players who *look good* from players who *help teams win*. Scouts and coaches seeking undervalued players should target high-RAPM, low-traditional-stat individuals.
+Finally, it is interesting to compare two fictitious, hypothetical players based on the patterns evident in our data. If Player A has 22 PPG, 8 RPG, RAPM of +0.02 per 40 minutes (only slightly above average), while the traditional stats look impressive, the actual net impact on winning is modest. This may be because of taking inefficient shots, playing poor defense, or high scores in garbage time (when their team would have already been very, very likely to win a given game). If Player B has 12 PPG, 4 RPG, RAPM of 0.08 per 40 minutes (within the top 10%), their traditional stats are unimpressive, but their net impact on winning is substantial. This is potentially due to really good defense, creating good shot opportunities for their teammates, or making good plays in clutch time of tied games. To circle back to our initial question, a key insight from this data is that recruiters and coaches should not only look for high-stat players, but those who support their team in winning games through a high-RAPM. “Looking good” on a basketball court and actually performing well are two different things.
 
 ![Top 30 Players Visualization](figs/top_players_rapm.png){fig-alt="Bar chart of top 30 players by Ridge RAPM" width="90%"}
 
@@ -1860,7 +1748,7 @@ tibble(
 
 ![RAPM vs Average Minutes](figs/rapm_vs_minutes.png){fig-alt="Scatter plot of RAPM vs average minutes played with loess smooth" width="70%"}
 
-**Figure 5:** RAPM vs average minutes played. **Correlation: r = 0.136** (nearly flat). The horizontal loess curve confirms our regularization successfully removes playing-time bias—high-minute and low-minute players show similar per-minute impact distributions. Unregularized plus-minus would show strong positive correlation (r > 0.5) as good players accumulate both more minutes and better stats. This near-zero correlation proves we're measuring impact per minute, not volume.
+**Figure 5:** We were curious to understand if our regularization successfully removed the playing-time bias through analyzing the RAPM versus average minutes played. We found a correlation of r = 0.136 (nearly flat). This indicates that our regularization was successful – high-minute and low-minute players show similar per-minute impact distributions, which proves we’re measuring impact per minute rather than volume.
 
 #### Shooting Skill and Winning Impact
 
@@ -1872,27 +1760,13 @@ tibble(
 
 ![RAPM by Position](figs/rapm_by_position.png){fig-alt="Box plots comparing RAPM distributions across positions (Guard, Forward, Center)" width="70%"}
 
-**Figure 7:** RAPM by position reveals distinct distributional patterns:
-
-- **Guards (n=1,554):** Widest range (±0.005), most extreme outliers. High ball-handling frequency creates opportunities for both elite impact (+0.004) and value destruction (-0.005).
-- **Forwards (n=690):** Intermediate spread (±0.003), hybrid roles produce moderate variance.
-- **Centers (n=69):** Narrowest range (±0.003), tightest clustering. Constrained roles (rim protection, rebounding) limit variance.
-
-**Statistical note:** While Centers have slightly higher SD (0.000806 vs Guards' 0.000738), Guards exhibit 76% wider outlier range, reflecting greater opportunity for impact differentiation through ball-handling and decision-making. Future work: position-specific regularization could improve estimates by applying less shrinkage to high-variance positions.
+**Figure 7:** Next, we were interested in considering how different positions affect RAPM outcome. Looking at the box plots, Guards (green) have the widest range (±0.005), with the most extreme outliers. This makes sense. High ball-handling frequency creates opportunities for elite impact such as assists and scoring or value destruction like missed shots. The Forwards have an intermediate spread (±0.003), and as a hybrid role produce moderate variance. Finally, Centers have the narrowest range (±0.003) because their roles, which includes rim protection and rebounding, limit variance of RAPM. Guards exhibit 76% wider outlier range than Centers, which reflects the greater opportunity for impact differentiation through decision-making. At the end of this paper, we will address the opportunity for future work: position-specific regularization could improve the estimates if we were to apply less shrinkage to high-variance positions. 
 
 #### Elite Shooters: Skill vs. Impact
 
 ![Elite Shooters](figs/elite_shooters_rapm.png){fig-alt="Bar chart of top shooters (FT% > 75%, 3P% > 35%) by RAPM" width="85%"}
 
-**Figure 8:** Top 20 elite shooters (FT% > 75%, 3P% > 35%, starters, 10+ games) ranked by RAPM.
-
-**Key patterns:**
-- **RAPM range:** 0.166 to 0.052 per 40 min (3.2× spread)
-- **Shooting % range:** 76-86% FT (minimal variation)
-- **Mosley dominates:** 0.166 RAPM despite nearly identical shooting to #2 Karaban (85.7% vs 85.2% FT, 39.7% vs 39.2% 3P)
-- **All positive impact:** Every elite shooter shows above-average RAPM (minimum +0.052)
-
-**Interpretation:** Within this elite cohort, shooting accuracy varies minimally (10 percentage point FT% range) while RAPM varies massively (3.2× spread). Across the full dataset, shooting accuracy explains **less than 1% of RAPM variance** (FT%: R² = 0.003, 3P%: R² = 0.009)—the remaining 99% reflects defense, playmaking, and situational performance not captured in shooting stats alone.
+**Figure 8:** In the figure above, we analyze the top 20 elite shooters ranked by RAPM, which draws shooters with a FT% > 75%, 3P% > 35%, and who played in 10+ games. There are a few key patterns that stand out, especially when analyzing the spread. The RAPM ranges from 0.166 to 0.052 (3.2x spread), while the free throw percentages range from 76 - 86%, which is very minimal. To go further, drawing on the fact that Isiaih Mosley’s shooting is almost identical in percentage to Alex Karaban’s  (85.7% vs 85.2% FT, 39.7% vs 39.2% 3P), but Mosley’s RAPM is much higher, we can see that shooting accuracy explains less than 1% of RAPM variance (FT%: R² = 0.003, 3P%: R² = 0.009). The other 99% is accounted for through defense, playmaking, and situational performance not captured in the shooting box score statistics alone.
 
 ## Fixed Effects: Conferences and Seasons
 
@@ -2052,147 +1926,38 @@ Overlap analysis (top 10 players):
 
 # Limitations & Future Work
 
+It is important to discuss the limitations of our analysis, and we have outlined concrete steps that would help develop the model further in the future. 
+
 ## Current Limitations
 
-### Data Constraints
+A critical limitation we had in our analysis in that ESPN play-by-play data does not include player substitution events. We could not observe when players subbed in and out of the bench onto the court. This halted our ability to create exact lineup compositions for each possession, so we were forced to use half-level stints with starters only. This served as a proxy for true possession-level lineups, so, similar to many models in the sports analytics field, we are treating our RAPM estimates as exploratory rather than definitive. Our starter-based approach is defensible because starters play the majority of minutes (~70-80% in college basketball) and half-level stints reduce noise from brief substitution events. A future development of the model could be pulling in and joining a secondary dataset, containing NCAA play-by-play with substitution timestamps, to the one we currently have. This would allow us to control for the varying lineups. 
 
-**1. No Substitution Events (Critical Limitation)**
+Another limitation we ran into from the lack of substitution data is a starter bias. Our model will underweight or exclude bench players who rarely start, but may provide value in the minutes they are on the court (especially during crunch time or other game-deciding scenarios). For example, a bench player who plays 15 minutes per game off the bench for 2 seasons (60 games * 15 minutes = 900 minutes) will fall below our 2,000-minute threshold, even if they are an impactful player.
 
-ESPN play-by-play data does not include player substitutions. We cannot observe:
-- When players check in and out during games
-- Exact lineup compositions for each possession
-- Bench player contributions in a systematic way
+One final limitation we wanted to address is that there is limited play context for ESPN data, such as defensive strategy (man versus zone) or play-type classification. This prevents us from running further analysis on offensives versus defensive contributions, or understanding how players create value rather than just if they do.
 
-**Impact on analysis:**
-- Forced to use **half-level stints with starters only** as a proxy for true possession-level lineups
-- Systematically excludes bench specialists who might have high impact in limited minutes
-- Cannot capture within-half lineup changes or strategic substitution patterns
-- Player-level RAPM estimates should be considered **exploratory** rather than definitive
 
-**Workaround:** Our starter-based approach is defensible because:
-- Starters play majority of minutes (~70-80% in college basketball)
-- Half-level aggregation (20-minute stints) reduces noise from brief substitutions
-- Team-level estimates remain robust even if player-level estimates have bias
+## Modeling Assumptions
 
-**What we need:** Official NCAA play-by-play with substitution timestamps, or manual lineup tracking from video. This would transform the analysis from exploratory to production-ready.
+We also had a couple of statistical modeling assumptions, including linear additivity, position-agnostic regularization, and static effects. 
 
-**2. Starter Bias**
+Our standard RAPM model assumes that player effects combine additively, so it wouldn’t account for interaction terms like synergy effects with two specific players on the court or matchup-specific interactions (Player A may defend well against Centers but not Forwards). A potential fix would be to include interaction terms (Player_i x Player_j), but this would increase the complexity, so we left it out of our model for simplicity and interpretability.
 
-Our analysis systematically excludes or underweights:
-- Bench players who rarely start but provide valuable minutes
-- Role players with specialized skills (defensive stoppers, three-point specialists)
-- Sixth-man types who might have higher per-minute impact than some starters
+The Ridge regression we used applies the same penalty to all factors regardless of their position, but it’s possible that the shrinkage penalty needs to be adjusted by position. Some NBA analysis has used Bayesian hierarchical models with position-specific priorities to strengthen predictions for players based on their positions, especially those with low sample sizes (low minutes). To describe this issue in context, it’s possible that Guards with high usage rates might need less shrinkage (large sample size with more opportunities to demonstrate skill) or Centers with fewer touches might need more shrinkage (smaller sample size with more noise).
 
-**Example:** A bench player who plays 15 minutes per game off the bench for 2 seasons (60 games × 15 min = 900 minutes) falls below our 2,000-minute threshold, even if they're highly impactful.
+We have static effects because we are estimating a single RAPM value per player, holding constant player skill. In reality, freshmen improve significantly from their freshman to senior year and transfer players change the context of each team dynamic dramatically. A potential fix for future analysis would be to make season-specific models, but this would require more data per player, which we do not have. We argue that our model assumption is reasonable because of the data limitations in the real-world – there are only a certain number of minutes each player plays, so aggregating across seasons increases our sample size, allowing us to generate better predictions.
 
-**3. Limited Play Context**
-
-ESPN data lacks:
-- Defensive scheme identifiers (man-to-man vs zone)
-- Shot location coordinates (only makes/misses)
-- Play-type classifications (pick-and-roll, transition, post-up)
-- Plus-minus tracking at possession level
-
-This prevents us from separating offensive vs defensive contributions or understanding *how* players create value.
-
-### Modeling Assumptions
-
-**1. Linear Additivity**
-
-Standard APM assumes player effects combine additively:
-$$\text{Team Impact} = \sum_{i=1}^{5} \text{Player}i\text{Impact}$$
-
-This ignores:
-- **Synergy effects:** Curry + Draymond might be more valuable together than the sum of their individual impacts
-- **Redundancy effects:** Two ball-dominant guards might have less combined value than expected
-- **Matchup-specific interactions:** Player A might excel vs centers but struggle vs stretch-fours
-
-**Potential fix:** Interaction terms (e.g., Player_i × Player_j) but this dramatically increases model complexity and data requirements.
-
-**2. Position-Agnostic Regularization**
-
-Ridge regression applies the same penalty to all players, but:
-- **Guards** with high usage rates might need less shrinkage (more opportunities to demonstrate skill)
-- **Centers** with limited touches might need more shrinkage (fewer opportunities, more noise)
-- **Role players** with specialized skills (e.g., defensive specialist) might need position-specific priors
-
-**Evidence from NBA analytics:** Bayesian hierarchical models with position-specific priors show 10-15% improvement in out-of-sample prediction for low-minute players.
-
-**3. Static Effects**
-
-We estimate a single RAPM value per player across all seasons, assuming:
-- Player skill is constant (no improvement or decline)
-- Context doesn't change (same teammates, opponents, system)
-
-**Reality:** 
-- Freshmen improve significantly from year 1 to year 4
-- Injuries affect performance
-- Transfers change contexts dramatically
-
-**Potential fix:** Season-specific estimates or growth curve models, but requires more data per player.
-
-### Statistical and Interpretive Caveats
-
-**1. Estimation Uncertainty**
-
-We report point estimates (e.g., Mosley = +0.166) without confidence intervals. The true impact could be ±0.02 or more, especially for players near the minimum sample threshold.
-
-**Impact:** Rankings near the middle are unstable—player ranked #50 might truly be anywhere from #40 to #60.
-
-**Fix:** Bootstrap confidence intervals or Bayesian credible intervals (computationally expensive with 10,000+ players).
-
-**2. Confounding with Team Effects**
-
-Despite including team fixed effects, we may incompletely separate:
-- **Coaching quality:** Great coaches might make all players look better
-- **System effects:** Offense-heavy systems inflate guard RAPM; defense-heavy systems inflate center RAPM
-- **Schedule strength:** Teams that play tougher schedules systematically differ
-
-**Partial mitigation:** Conference and season fixed effects help, but residual confounding likely remains.
-
-**3. Measurement Error Propagation**
-
-Our two-stage process (WP model → RAPM estimation) compounds errors:
-1. WP model predictions have error
-2. Half-level stint aggregation has error  
-3. RAPM regularization has error
-
-Each stage introduces bias and variance. Quantifying total uncertainty requires complex error propagation analysis we haven't performed.
 
 ## Future Research Directions
 
-The most critical improvement would be **acquiring substitution data** from NCAA, Synergy Sports, or manual video coding. This would transform the analysis from exploratory to production-ready by enabling possession-level lineup tracking, bench player evaluation, and more precise impact attribution. Without this foundational data upgrade, all methodological extensions remain limited by our half-level stint approximations.
+For the future, three concrete steps that should be taken to improve the analysis include acquiring substitution data, quantifying uncertainty, building Bayesian hierarchical models, and decomposing offensive and defensive RAPM.
 
-Beyond data acquisition, several methodological extensions could strengthen the analysis:
+Acquiring substitution data would require pulling in a new dataset containing play-by-play data with substitution events, and then joining it to our current dataset. This would improve our analysis by enabling possession-level lineup, and thus, more precise individual player impact attribution. Beyond the data acquisition itself, the next four concrete steps explain methodological improvements to strengthen our analysis.
 
-### Uncertainty Quantification
+Another important next step in our model would be quantifying uncertainty through bootstrap estimates. Currently we report the point estimates (e.g., Mosley =  +0.166) without confidence intervals. If we were to create 95% confidence intervals for all player estimates, we could better compare the similarly-ranked players by identifying if the rankings of players are statistically significant. To implement this, we could resample the stints with replacement 1,000 times and re-fit the RAPM model for each bootstrap sample.
 
-Currently, we report point estimates (e.g., Mosley = +0.166) without confidence intervals. Bootstrap resampling could provide 95% confidence intervals for all player estimates, making explicit the estimation uncertainty that varies with sample size. Implementation is straightforward—resample stints with replacement 1,000 times and re-fit the RAPM model for each bootstrap sample. This would prevent overconfident comparisons between similarly-ranked players and identify which rankings are statistically robust.
+Our current RAPM is a single number combining both offense and defense. If we were to decompose these components, we could see the impact on a team's offensive efficiency and the impact on the opponent’s offensive efficiency. This would allow us to draw conclusions about which defenders are elite, but maybe have a lower offensive ability, or vice versa. In our research, we have seen NBA analytics conduct similar analyses, but it seems to be underexplored at the college basketball level.
 
-### Bayesian Hierarchical Models with Position-Specific Priors
-
-Ridge regression applies uniform shrinkage to all players, but guards with high usage rates may need less shrinkage than centers with limited touches. A Bayesian hierarchical model would allow position-specific priors:
-
-$$\text{RAPM}_i \sim \text{Normal}(\mu_{\text{position}[i]}, \sigma_{\text{position}[i]}^2)$$
-
-Each position (Guard, Forward, Center) gets its own prior distribution learned from data. Players with limited data are pulled toward their position's average rather than global zero. This could improve prediction accuracy by 10-15% for low-minute players while preserving estimates for high-minute players. Implementation via `brms` or `rstan` in R would require substantial compute time (3-5 days for MCMC) but is methodologically mature.
-
-### Offensive and Defensive RAPM Decomposition
-
-Currently, RAPM is a single number combining offense and defense. Decomposing into separate components would reveal specialists:
-
-- **O-RAPM:** Impact on team's offensive efficiency (points scored per possession)
-- **D-RAPM:** Impact on opponent's offensive efficiency (points allowed per possession)
-
-This requires possession-level data with outcomes (made/missed shots, turnovers) and doubles the parameters to estimate per player, demanding larger sample sizes. The value is high: identifying elite defenders with limited offense (ideal role players) or high-volume scorers with defensive liabilities (minutes restriction candidates). This decomposition is standard in NBA analytics but underexplored in college basketball research.
-
-### Interaction Effects for Lineup Synergy
-
-The current model assumes player effects combine additively—Player A's impact is the same regardless of who else is on court. Modeling pairwise interactions captures synergy:
-
-$$\Delta WP = \sum_{i} \beta_i + \sum_{i<j} \gamma_{ij} \cdot \mathbb{1}(\text{both } i \text{ and } j \text{ on court})$$
-
-If Player A + Player B together consistently outperform $\beta_A + \beta_B$, their interaction term $\gamma_{AB}$ quantifies synergy (positive values) or redundancy (negative values). This is computationally expensive—adds $\binom{n}{2}$ parameters (millions for thousands of players)—but sparsity constraints or filtering to top-100 players makes it tractable. The payoff is identifying optimal lineup combinations, particularly relevant for tournament roster construction where chemistry matters.
 
 ## Alternative Approach: Expanded Roster RAPM (7-Player Rotation)
 
